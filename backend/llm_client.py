@@ -1,0 +1,141 @@
+"""
+LM Studio LLM 客户端封装
+使用 OpenAI 兼容 API（http://127.0.0.1:1234/v1/chat/completions）
+自动检测可用性，不可用时降级到关键词匹配
+"""
+
+import json
+import logging
+import urllib.error
+import urllib.request
+
+from config import LLM_BASE_URL, LLM_MODEL
+
+logger = logging.getLogger(__name__)
+
+_llm_available: bool | None = None  # 缓存可用性检测结果
+
+# 导出给其他模块用的别名
+OLLAMA_MODEL = LLM_MODEL
+
+
+def check_ollama() -> bool:
+    """检测 LM Studio 服务是否可用"""
+    global _llm_available
+    try:
+        req = urllib.request.Request(
+            f"{LLM_BASE_URL}/v1/models", method="GET"
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            _llm_available = resp.status == 200
+    except Exception:
+        _llm_available = False
+    return _llm_available
+
+
+def is_available() -> bool:
+    """返回 LM Studio 是否可用（带缓存）"""
+    if _llm_available is None:
+        return check_ollama()
+    return _llm_available
+
+
+def reset_cache():
+    """重置可用性缓存，强制下次重新检测"""
+    global _llm_available
+    _llm_available = None
+
+
+def chat(prompt: str, system_prompt: str = "", model: str = "") -> str:
+    """
+    调用 LM Studio 生成回复（OpenAI 兼容 API）。
+
+    Args:
+        prompt: 用户提示
+        system_prompt: 系统提示（可选）
+        model: 模型名称（默认使用 config 中配置的模型）
+
+    Returns:
+        LLM 生成的文本
+
+    Raises:
+        RuntimeError: LM Studio 不可用或调用失败
+    """
+    if not is_available():
+        raise RuntimeError("LM Studio 服务不可用")
+
+    model = model or LLM_MODEL
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    payload = json.dumps({
+        "model": model,
+        "messages": messages,
+        "temperature": 0.3,
+        "max_tokens": 2048,
+        "stream": False,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{LLM_BASE_URL}/v1/chat/completions",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            return result["choices"][0]["message"]["content"]
+    except urllib.error.URLError as e:
+        _mark_unavailable()
+        raise RuntimeError(f"LM Studio 调用失败: {e}") from e
+    except (KeyError, IndexError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"LM Studio 响应解析失败: {e}") from e
+
+
+def chat_json(prompt: str, system_prompt: str = "", model: str = "") -> dict:
+    """
+    调用 LM Studio 并解析 JSON 响应。
+
+    自动处理 LLM 输出中的 markdown 代码块标记。
+
+    Returns:
+        解析后的 dict
+
+    Raises:
+        RuntimeError: 调用失败或 JSON 解析失败
+    """
+    raw = chat(prompt, system_prompt, model)
+
+    # 清理常见的 markdown 代码块标记
+    text = raw.strip()
+    if text.startswith("```"):
+        first_newline = text.find("\n")
+        if first_newline != -1:
+            text = text[first_newline + 1:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # 尝试从文本中提取 JSON 对象
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start != -1 and end > start:
+            try:
+                return json.loads(text[start:end])
+            except json.JSONDecodeError:
+                pass
+        raise RuntimeError(f"无法从 LLM 输出中解析 JSON:\n{raw[:500]}")
+
+
+def _mark_unavailable():
+    """标记 LM Studio 为不可用"""
+    global _llm_available
+    _llm_available = False
