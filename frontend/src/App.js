@@ -3,7 +3,8 @@ import InputBox from './components/InputBox';
 import ModelCard from './components/ModelCard';
 import CompareView from './components/CompareView';
 import HistoryPanel from './components/HistoryPanel';
-import { analyzeInput, fetchHistory, checkHealth } from './api';
+import WorkflowContainer from './components/workflow/WorkflowContainer';
+import { analyzeInput, fetchHistory, checkHealth, workflowStart } from './api';
 import './App.css';
 
 const TASK_TYPE_LABELS = {
@@ -66,9 +67,14 @@ export default function App() {
     setLoading(true);
 
     try {
-      const data = await analyzeInput(input);
-      setMessages((prev) => [...prev, { type: 'result', data }]);
-      loadHistory();
+      const wf = await workflowStart(input);
+      if (wf.task_type === 'other') {
+        const data = await analyzeInput(input);
+        setMessages((prev) => [...prev, { type: 'result', data }]);
+        loadHistory();
+      } else {
+        setMessages((prev) => [...prev, { type: 'workflow', data: wf, input }]);
+      }
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -241,6 +247,13 @@ export default function App() {
                       {regeneratingIndex === i ? '重试中...' : '重试'}
                     </button>
                   </div>
+                </div>
+              );
+            }
+            if (msg.type === 'workflow') {
+              return (
+                <div key={i} className="message system-message fade-in">
+                  <WorkflowContainer initialData={msg.data} inputText={msg.input} />
                 </div>
               );
             }

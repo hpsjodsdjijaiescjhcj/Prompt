@@ -16,6 +16,14 @@ load_dotenv()
 
 import llm_client
 from classifier import classify_task
+from orchestrator import (
+    ClarifyValidationError,
+    confirm_spec,
+    execute_session,
+    start_workflow,
+    submit_clarifications,
+    validate_session_output,
+)
 from prompt_generator import generate_prompt
 from recommender import recommend_models
 
@@ -160,6 +168,122 @@ def analyze():
     })
 
     return jsonify(response_data)
+
+
+@app.route("/api/workflow/start", methods=["POST"])
+def workflow_start():
+    """创建编排工作流会话。"""
+    data = request.get_json() or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+
+    try:
+        result = start_workflow(
+            text=text,
+            preferred_executor=data.get("preferred_executor"),
+            context=data.get("context") or {},
+        )
+        return jsonify(result)
+    except Exception as exc:
+        logger.exception("workflow start failed")
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/workflow/clarify", methods=["POST"])
+def workflow_clarify():
+    """提交澄清答案，生成 spec 草案。"""
+    data = request.get_json() or {}
+    session_id = data.get("session_id")
+    answers = data.get("answers") or {}
+    if not session_id:
+        return jsonify({"error": "session_id is required"}), 400
+
+    try:
+        result = submit_clarifications(session_id=session_id, answers=answers)
+        return jsonify(result)
+    except KeyError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except ClarifyValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except Exception as exc:
+        logger.exception("workflow clarify failed")
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/workflow/confirm_spec", methods=["POST"])
+def workflow_confirm_spec():
+    """确认 spec 并生成路由与提示词。"""
+    data = request.get_json() or {}
+    session_id = data.get("session_id")
+    spec = data.get("spec")
+    if not session_id:
+        return jsonify({"error": "session_id is required"}), 400
+    if not isinstance(spec, dict):
+        return jsonify({"error": "spec is required"}), 400
+
+    try:
+        result = confirm_spec(session_id=session_id, spec=spec)
+        return jsonify(result)
+    except KeyError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except Exception as exc:
+        logger.exception("workflow confirm_spec failed")
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/workflow/execute", methods=["POST"])
+def workflow_execute():
+    """执行工作流。"""
+    data = request.get_json() or {}
+    session_id = data.get("session_id")
+    executor = data.get("executor", "prompt_only")
+    executor_config = data.get("executor_config") or {}
+    if not session_id:
+        return jsonify({"error": "session_id is required"}), 400
+
+    try:
+        result = execute_session(
+            session_id=session_id,
+            executor=executor,
+            executor_config=executor_config,
+        )
+        return jsonify(result)
+    except KeyError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except Exception as exc:
+        logger.exception("workflow execute failed")
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/workflow/validate", methods=["POST"])
+def workflow_validate():
+    """校验执行输出，可选自动修订。"""
+    data = request.get_json() or {}
+    session_id = data.get("session_id")
+    if not session_id:
+        return jsonify({"error": "session_id is required"}), 400
+
+    try:
+        result = validate_session_output(
+            session_id=session_id,
+            output=data.get("output"),
+            auto_revise=bool(data.get("auto_revise", False)),
+        )
+        return jsonify(result)
+    except KeyError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except Exception as exc:
+        logger.exception("workflow validate failed")
+        return jsonify({"error": str(exc)}), 400
 
 
 @app.route("/api/history", methods=["GET"])

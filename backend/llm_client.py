@@ -4,6 +4,8 @@ Gemini LLM 客户端封装
 自动检测可用性，不可用时降级到关键词匹配
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import urllib.error

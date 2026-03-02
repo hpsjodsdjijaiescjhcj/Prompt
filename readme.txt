@@ -27,6 +27,16 @@
   - 返回最近历史分析记录（内存保存，重启丢失）
 - `GET /api/health`
   - 返回服务健康状态和本地 LLM 可用性
+- `POST /api/workflow/start`
+  - 启动编排会话（任务识别 + 澄清表单）
+- `POST /api/workflow/clarify`
+  - 提交澄清答案，生成结构化 spec 草案
+- `POST /api/workflow/confirm_spec`
+  - 确认/编辑 spec，生成执行路由与可复制 prompts
+- `POST /api/workflow/execute`
+  - 按执行器运行任务（支持 `prompt_only` / `local_lmstudio` / `openai_compatible`）
+- `POST /api/workflow/validate`
+  - 校验输出并返回 pass/fail + issues；支持一次 auto revise
 
 ### 智能能力
 
@@ -123,7 +133,41 @@ npm start
 - 真实多模型 API 自动执行并返回答案（目前以“推荐 + 提示词”为主）
 - 持久化历史、用户偏好学习、企业级权限与审计
 
-## 8. 下一阶段建议
+## 8. 新增编排工作流（V1）
+
+工作流状态：
+
+- `input_received`
+- `clarifying`
+- `spec_ready`
+- `executing`
+- `validating`
+- `done`
+
+当前任务处理器：
+
+- `email`（功能完整：澄清 -> spec -> prompt -> 执行 -> 规则校验）
+- `code`（脚手架：澄清 -> spec -> codex 风格 prompt，支持 prompt-only）
+- `other`（自动回退到旧的 `/api/analyze` 流程）
+
+默认策略：
+
+- 默认执行器是 `prompt_only`，即使没有外部模型 API 也可使用（可展示 spec + prompts）。
+
+## 9. 手工验证场景
+
+1. 邮件任务：
+   - 输入：`帮我写一封邮件，催供应商给发票`
+   - 应进入 `clarifying` 并返回表单；确认 spec 后可得到 prompts。
+   - 若执行输出缺少截止日期，`/api/workflow/validate` 应返回 `missing_deadline` 问题。
+2. 非编排任务：
+   - 输入：`帮我总结一篇文章`
+   - `workflow/start` 应返回 `task_type=other`，前端回退到旧分析卡片。
+3. 代码任务（脚手架）：
+   - 输入：`帮我给前端加一个按钮并接API`
+   - 应进入 `code` 澄清表单并生成代码改动 prompt。
+
+## 10. 下一阶段建议
 
 结合 PRD，可按这个顺序推进：
 
