@@ -2,3 +2,15 @@
 .env
 backend/.env
 frontend/.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Frontend artifacts
+frontend/build/
+frontend/node_modules/
+
+# Local training/runtime artifacts
+backend/data/
+backend/models/
