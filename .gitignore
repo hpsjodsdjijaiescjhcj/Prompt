@@ -1,4 +1,11 @@
 *.pdf
+
+# Ignore all dotfiles and dot-directories by default.
+.*
+**/.*
+!.gitignore
+
+# Environment files
 .env
 backend/.env
 frontend/.env
