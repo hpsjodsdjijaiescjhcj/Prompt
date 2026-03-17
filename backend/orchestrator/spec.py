@@ -40,6 +40,7 @@ def new_session_record(
         "generated_prompts": [],
         "execution": None,
         "validation": None,
+        "logic_validation": None,
         "final_output": None,
         "created_at": ts,
         "updated_at": ts,

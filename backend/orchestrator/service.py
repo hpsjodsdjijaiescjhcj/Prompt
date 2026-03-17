@@ -4,6 +4,7 @@ import re
 
 from recommender import recommend_models
 
+from .adversarial_validator import run_adversarial_residual_validation
 from .executor import run_executor
 from .inference import apply_inferred_defaults, infer_initial_answers
 from .router import get_handler, route_task
@@ -209,6 +210,8 @@ def validate_session_output(
     current_output = output if output is not None else execution.get("raw_output", "")
 
     report = handler.validate(spec, current_output)
+    logic_validation = run_adversarial_residual_validation(spec, current_output)
+    report = _merge_logic_validation(report, logic_validation)
     final_output = current_output
 
     if (
@@ -228,12 +231,15 @@ def validate_session_output(
             final_output = revised["raw_output"]
             execution = revised
             report = handler.validate(spec, final_output)
+            logic_validation = run_adversarial_residual_validation(spec, final_output)
+            report = _merge_logic_validation(report, logic_validation)
 
     session = store.update(
         session_id,
         state="done",
         execution=execution,
         validation=report,
+        logic_validation=logic_validation,
         final_output=handler.postprocess(final_output),
     )
 
@@ -243,6 +249,32 @@ def validate_session_output(
         "validation": session["validation"],
         "final_output": session["final_output"],
     }
+
+
+def _merge_logic_validation(report: dict, logic_validation: dict) -> dict:
+    merged = dict(report or {})
+    issues = list(merged.get("issues") or [])
+    for issue in (logic_validation.get("precondition_issues") or []) + (logic_validation.get("attack_findings") or []):
+        issues.append(
+            {
+                "type": issue.get("type"),
+                "message": issue.get("message"),
+                "source": "logic_validation",
+                "step_id": issue.get("step_id"),
+            }
+        )
+
+    merged["issues"] = issues
+    merged["logic_validation"] = logic_validation
+    merged["pass"] = bool(merged.get("pass")) and bool(logic_validation.get("pass"))
+
+    repair_prompt = logic_validation.get("repair_prompt", "")
+    base_fix_prompt = merged.get("suggested_fix_prompt", "")
+    if repair_prompt and base_fix_prompt:
+        merged["suggested_fix_prompt"] = f"{base_fix_prompt}\n\n{repair_prompt}"
+    elif repair_prompt:
+        merged["suggested_fix_prompt"] = repair_prompt
+    return merged
 
 
 def get_session(session_id: str) -> dict | None:

@@ -1,246 +1,301 @@
-# AI提示词管家（AI Prompt Router / Task Orchestrator）
-
-一个面向多模型时代的 AI 智能路由与编排层：  
-输入自然语言需求，系统完成任务识别、澄清补全、结构化对齐、模型推荐与提示词生成，并支持可选执行与验收。
-
-## 1. 产品定位
-
-- 解决“模型太多、不会选、不会写提示词”的问题
-- 把“AI 怎么用”从单次问答升级为工作流：`Clarify -> Align(Spec) -> Execute -> Validate`
-- 保留原有轻量能力，同时逐步过渡到编排体系
-
-一句话：**AI 的智能路由层 + 任务编排层 + 提示词操作系统**。
-
-## 2. 当前能力
-
-### 2.1 后端（Flask）
-
-- `POST /api/analyze`
-  - 原有流程：任务分类 -> 模型推荐 -> 专属提示词
-- `GET /api/history`
-  - 返回最近历史记录（内存，重启丢失）
-- `GET /api/health`
-  - 返回服务健康状态和 LLM 可用性
-
-- `POST /api/workflow/start`
-  - 启动工作流会话（路由 + 澄清表单或直出 spec 草案）
-- `POST /api/workflow/clarify`
-  - 提交澄清答案，生成结构化 spec 草案
-- `POST /api/workflow/confirm_spec`
-  - 确认 spec，返回执行路由、推荐模型与生成提示词
-- `POST /api/workflow/execute`
-  - 调用执行器运行（`prompt_only` / `local_lmstudio` / `openai_compatible`）
-- `POST /api/workflow/validate`
-  - 输出验收（pass/fail + issues），支持一次 auto revise
-
-### 2.2 前端（React）
-
-- 聊天式输入 + 示例快捷触发
-- 旧流程卡片视图 / 对比视图
-- 新增 workflow 多步交互（澄清、spec 确认、执行与验收）
-- 历史侧栏、复制提示词、状态提示
-
-## 3. 编排工作流（V1）
-
-### 3.1 会话状态
-
-- `input_received`
-- `clarifying`
-- `spec_ready`
-- `executing`
-- `validating`
-- `done`
-
-### 3.2 任务处理器
-
-- `email`
-  - 邮件类任务，支持细化字段、规则验收
-- `code`
-  - 代码任务脚手架，支持 codex 风格提示词
-- `writing`
-  - 写作类任务澄清与结构化 spec
-- `generic`
-  - 通用澄清层（信息不足或未覆盖任务）
-  - 对天气类查询会追加专项字段（地点/时间范围/单位等）
-- `other`
-  - 仅低置信度兜底时回退旧 `/api/analyze`
-
-### 3.3 路由策略
-
-- 优先：LLM 语义路由（`email | code | writing | generic | other`）
-- 降级：分类器 + 规则兜底
-- 核心策略：**信息不足优先进入 `generic` 澄清，不直接回退**
+# TaskForge
 
-### 3.4 Clarify 校验
+[中文版本](./README.zh-CN.md)
 
-后端基于 schema 强校验：
+**Slogan:** Turn vague requests into executable AI tasks.  
+**Subtitle:** An AI task orchestration layer that turns vague requests into executable specs, model choices, and model-adapted prompts.
 
-- 必填校验（含条件必填 `required_when`）
-- 条件显示逻辑（`show_when`）
-- 字段类型校验（字符串、数字、布尔、枚举、多选）
-- 数值边界校验（`min/max`）
+TaskForge is an AI task clarification and orchestration product for real-world work.  
+It is not just a prompt utility, and not a thin wrapper that copies user input into a model prompt. It is a middle layer that turns vague user requests into executable task specs.
 
-## 4. 模型推荐与提示词
+Its core goal is straightforward: **when a user describes a task in natural language, the system should understand the request, fill in critical missing context, align the task spec, choose the right model, generate model-adapted instructions, and then support reliable delivery.**
 
-- 保留原推荐器能力（`backend/recommender.py`）
-- 在 workflow 的 `confirm_spec` 中返回 `recommended_models`（Top 3）
-- 提示词模板已升级为结构化专业模板（不再简单参数拼接）
+---
 
-## 5. 项目结构
+## Product Positioning
 
-```text
-ai-prompt-manager/
-├── backend/
-│   ├── app.py
-│   ├── classifier.py
-│   ├── recommender.py
-│   ├── prompt_generator.py
-│   ├── llm_client.py
-│   ├── config.py
-│   ├── requirements.txt
-│   └── orchestrator/
-│       ├── service.py
-│       ├── router.py
-│       ├── executor.py
-│       ├── store.py
-│       ├── validator.py
-│       ├── email_handler.py
-│       ├── code_handler.py
-│       ├── writing_handler.py
-│       └── generic_handler.py
-└── frontend/
-    ├── src/
-    │   ├── App.js
-    │   ├── api.js
-    │   └── components/
-    └── package.json
-```
+In most AI products, the actual problem is not the lack of models. The real problems are:
 
-## 6. 本地运行
+- users do not know how to describe a task well
+- users do not know what information is required
+- users do not know why a result is poor
+- users do not know which model fits the task
+- users do not know how to turn a vague intent into a stable executable request
 
-### 6.1 启动后端
+TaskForge addresses the gap between a user request and an AI-executable task.
 
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python app.py
-```
+It acts as an orchestration layer:
 
-默认地址：`http://localhost:5001`
+- upward: it receives raw natural-language requests from users
+- downward: it connects to models today and future agents tomorrow
+- in the middle: it handles clarification, alignment, structuring, model selection, instruction adaptation, and validation
 
-### 6.2 启动前端
+---
 
-```bash
-cd frontend
-npm install
-npm start
-```
+## What This Product Actually Solves
 
-默认地址：`http://localhost:3000`
+### 1. It lowers the cost of expressing a task
 
-## 7. 配置说明
+Many users know what they want, but they do not know how to phrase it in a way that AI can execute well.  
+TaskForge does not require users to fully specify everything up front. It accepts an incomplete request first, then helps fill in the critical context.
 
-- 后端环境变量位于 `backend/.env`
-- 关键配置在 `backend/config.py`：
-  - `GEMINI_BASE_URL`
-  - `GEMINI_API_KEY`
-  - `GEMINI_MODEL`
+### 2. It upgrades AI usage from “ask once” to “complete a task”
 
-说明：
+Most chat-style AI products are optimized for one-shot answers.  
+TaskForge is optimized for task completion:
 
-- 若 LLM 不可用，系统会自动降级到本地规则/模板能力
-- 默认执行器为 `prompt_only`（无需外部 API 即可使用）
+- detect whether the request is specific enough
+- ask only for missing information that materially affects quality
+- normalize the task into a shared spec
+- choose the right model and instruction format
+- validate whether the result actually matches the goal
 
-## 8. 手工验证场景
+This means the product is not only about generating content. It is about increasing task success rate.
 
-### 场景 A：邮件
+### 3. It reduces rework
 
-输入：`帮我写一封邮件，催供应商给发票`
+Poor AI output is often caused by missing information before execution even begins.  
+TaskForge tries to absorb that failure earlier, inside the clarification and alignment stages, instead of forcing users into repeated retries after the result is already bad.
 
-预期：
+### 4. It creates the foundation for future agent automation
 
-- 进入 `clarifying`
-- 提交后得到 `spec_ready`
-- `confirm_spec` 返回提示词 + 推荐模型
-- 若输出缺截止时间，`validate` 返回 `missing_deadline`
+If the system is expected to evolve into multi-step execution, agent automation, or multi-model coordination, then structured task representation is mandatory.  
+TaskForge is not yet a full autonomous agent system, but it already builds the prerequisite layer:
 
-### 场景 B：写作
+- unified task representation
+- missing-information detection
+- goal and acceptance alignment
+- extensible orchestration paths
 
-输入：`帮我写一篇小红书文案`
+### 5. Different AI models need different instruction styles
 
-预期：
+The same task should not be expressed the same way to every model.  
+Some models respond better to structured constraints. Some prefer stronger role framing. Some are better at code editing, and others at long-form analysis.
 
-- 进入 `writing` 澄清流程
-- 可在 spec 阶段编辑目标、约束、验收标准
+At this stage, one of TaskForge’s most practical values is that after understanding the task, it continues to do two things:
 
-### 场景 C：通用分析
+- choose a better-fit AI for the task
+- generate instructions adapted to that model’s strengths
 
-输入：`帮我分析特斯拉商业模式`
+So the product is not only helping users organize intent. It is also translating intent into a model-specific form that is more likely to execute well.
 
-预期：
+---
 
-- 进入 `generic`（可能直接 `spec_ready`，取决于语义明确度）
-- `confirm_spec` 不应报错
+## Core Advantages
 
-### 场景 D：天气查询
+### 1. It does not throw raw user text directly at a model
 
-输入：`纽约最近三天天气`
+This is the biggest difference from many prompt wrappers.  
+TaskForge does not stop at rewriting input. It first asks:
 
-预期：
+- is the task already clear enough
+- what information is already present
+- what information is missing but important
+- should the task be clarified before execution
 
-- generic 澄清出现天气专项字段（地点/时间范围/单位）
-- 最终 prompt 保留原始请求与天气参数
+### 2. It emphasizes minimum necessary clarification
 
-## 9. 已知限制（V1）
+The goal is not to ask more questions.  
+The goal is to ask only the questions that materially affect output quality, so users get better results with less interaction cost.
 
-- 会话与历史均为内存存储，重启丢失
-- `code` handler 仍偏提示词与结构化输出，不是完整自动改仓库闭环
-- 路由策略虽已语义化，但仍有降级规则
+### 3. It moves from task classification to task normalization
 
-## 10. 下一步建议
+The system does not merely classify tasks. It gradually converts them into a unified task spec.  
+That makes it easier for different models, executors, and future agents to operate around the same task representation.
 
-1. 将 task schema 抽离为配置文件（减少代码级硬编码）
-2. 加强 generic 的子域识别（法律、金融、教育等）
-3. 增加持久化存储与用户偏好记忆
-4. 打通执行器观测（耗时、失败原因、自动重试策略）
+### 4. Model choice and instruction adaptation are first-class capabilities
 
-## 11. 轻量模型训练（低 API 成本）
+Many products treat all models as interchangeable APIs. That directly loses quality.  
+TaskForge treats “which model should handle this task” and “how that model should be instructed” as core product behavior.
 
-已内置一个本地小模型流水线，用于路由与基础槽位预测，减少在线 API 调用：
+That creates immediate value:
 
-- 采集脚本：`backend/training/crawl_legal_corpus.py`
-- 数据构建：`backend/training/build_dataset.py`
-- 训练脚本：`backend/training/train_small_model.py`
-- 模型接入点：`backend/orchestrator/ml_extractor.py`
+- users do not need to understand model differences themselves
+- the same task gets a more model-native instruction style
+- model recommendation is not cosmetic; it affects delivery quality
 
-### 11.1 合法数据采集原则
+### 5. It is explainable and extensible
 
-- 仅使用公开 API（Wikipedia API、StackExchange API）
-- 不绕过登录/反爬机制，不抓取受限页面
-- 采集前请确认平台 ToS 与数据使用条款
-- 生产环境建议保留数据来源与许可证信息
+TaskForge is not a black box. It can expose:
 
-### 11.2 训练步骤
+- why clarification is needed
+- which key fields are still missing
+- which workflow stage the task is currently in
+- why a model or execution route is being recommended
 
-```bash
-# 1) 可选：安装训练依赖
-pip install -r backend/training/requirements.txt
+That makes it more suitable for iteration than systems that only produce output and hide reasoning.
 
-# 2) 采集公开语料（网络可用时）
-python backend/training/crawl_legal_corpus.py --out backend/data/raw_corpus.jsonl
+### 6. Lightweight models first, lower API cost
 
-# 3) 构建监督数据
-python backend/training/build_dataset.py --raw backend/data/raw_corpus.jsonl --out backend/data/train_small_model.jsonl
+TaskForge does not assume every understanding task should depend on expensive online foundation models.
 
-# 4) 训练并导出模型
-python backend/training/train_small_model.py --train backend/data/train_small_model.jsonl --out-dir backend/models/small_orchestrator
-```
+The project already includes a lightweight model path for frequent, lower-level understanding work:
 
-训练产物：
+- initial routing
+- basic slot extraction
+- low-cost task understanding
+- simple structured judgments
+- low-cost pre-routing model decisions
 
-- `backend/models/small_orchestrator/router.joblib`
-- `backend/models/small_orchestrator/slots.joblib`
+This matters because it:
 
-当以上文件存在时，系统会优先尝试本地小模型进行任务路由与槽位预测，再回退到原有 LLM/规则逻辑。
+- reduces online API usage
+- improves responsiveness
+- creates room for domain-specific iteration
+- makes the system more controllable as an engineering product
+
+### 7. Validation is moving from shallow checks to adversarial logic verification
+
+TaskForge is not limited to format validation or surface-level output checks.  
+Its next major advantage is a stronger verification layer built around three ideas:
+
+- an adversarial verifier that actively looks for logical failure points
+- a symbolic or structured view of the task instead of pure natural-language debate
+- residual repair that focuses only on broken parts instead of regenerating everything
+
+This direction matters because it upgrades validation from:
+
+`did the output look acceptable`
+
+to:
+
+`is the task plan logically sound, executable under constraints, and robust against hostile edge cases`
+
+That is the bridge between today’s orchestration layer and tomorrow’s reliable agent systems.
+
+---
+
+## Current Product Logic
+
+TaskForge currently centers around a simple workflow:
+
+`Clarify -> Align -> Execute -> Validate`
+
+### Clarify
+
+The system first checks whether the request is specific enough.  
+If not, it asks only the most important questions instead of dumping a generic form onto the user.
+
+### Align
+
+The request is normalized into a shared task spec that makes the following explicit:
+
+- what the actual objective is
+- who or what the task targets
+- what constraints and boundaries exist
+- what counts as an acceptable result
+
+### Execute
+
+Execution is not only about “running a model.” It also includes:
+
+- selecting a suitable AI for the task
+- adapting the instruction format to the chosen model
+- producing high-quality, model-specific prompts when prompt-only delivery is the right choice
+
+In other words, model selection and instruction adaptation are already part of product delivery.
+
+### Validate
+
+Generation is not treated as the finish line.  
+The system can still check whether the output meets the original goal and constraints.
+
+At the current stage, validation already includes a first-phase prototype of:
+
+- plan-outline generation
+- adversarial failure discovery
+- residual repair targeting
+
+In other words, the system is starting to verify not only whether an answer exists, but also where its logic is weak and which part should be repaired first.
+
+---
+
+## How It Differs from Typical Prompt Tools
+
+Typical prompt tools usually follow this logic:
+
+`user input -> wrap as a prompt -> done`
+
+TaskForge follows a different logic:
+
+`user input -> detect ambiguity -> fill missing context -> normalize the task -> choose the model -> generate model-adapted instructions -> execute -> validate`
+
+That makes it a task orchestration layer, not just a prompt editor.
+
+---
+
+## Why Train a Lightweight Model
+
+If all task understanding is delegated to expensive online models, the tradeoffs are obvious:
+
+- higher cost
+- higher latency
+- lower controllability
+- worse iteration economics
+
+That is why TaskForge is not only a workflow design project. It is also trying to build its own basic understanding layer.
+
+The role of the lightweight model is not to replace all large models. Its role is to absorb high-frequency, structured, lower-cost understanding work such as:
+
+- task category detection
+- early information extraction
+- missing slot detection
+- simple intent recognition
+- low-cost model-routing preparation
+
+That allows larger models to focus on harder, higher-value stages.
+
+Over time, this lightweight path can expand beyond routing into specialized verification roles, such as:
+
+- logic gap detection
+- edge-case discovery
+- partial plan repair
+- low-cost validation before expensive execution
+
+---
+
+## Suitable Use Cases
+
+TaskForge is well suited for scenarios where users know what they want, but cannot yet express the task in a fully executable way, such as:
+
+- writing and content creation
+- email and business communication
+- analysis and explanation tasks
+- code and development requests
+- tasks with multiple constraints
+
+It is also suitable as a base layer for future evolution into:
+
+- agent automation
+- multi-model collaboration
+- domain-specific task understanding
+- long-term user preference learning
+
+---
+
+## Value at the Current Stage
+
+The current value of the project is not that it already replaces all AI products.  
+Its value is that it is moving in a more correct direction:
+
+- AI use is not treated as one-shot Q&A
+- prompts are not treated as the final product
+- model power alone is not treated as the answer to task failure
+- task understanding, normalization, model selection, instruction adaptation, orchestration, and validation are treated as core product capabilities
+
+That is exactly what makes it a credible base for future agent automation.
+
+---
+
+## One-Sentence Summary
+
+**TaskForge is an orchestration layer that forges vague user intent into executable AI tasks.**
+
+Its value is not “writing a few better prompts.” Its value is:
+
+- helping users make the task clear
+- helping the system structure the task
+- helping users choose a better-fit AI
+- generating instructions adapted to different model strengths
+- improving execution stability
+- preparing the path toward agent automation
