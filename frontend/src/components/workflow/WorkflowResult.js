@@ -24,6 +24,7 @@ export default function WorkflowResult({ data, onExecute, onValidate, loading })
 
   const execution = data?.execution;
   const validation = data?.validation;
+  const logicValidation = validation?.logic_validation;
 
   return (
     <div className="wf-card">
@@ -123,9 +124,76 @@ export default function WorkflowResult({ data, onExecute, onValidate, loading })
       {validation && (
         <div className={`wf-validation ${validation.pass ? 'pass' : 'fail'}`}>
           <strong>{validation.pass ? 'PASS' : 'FAIL'}</strong>
-          {!validation.pass && (validation.issues || []).map((issue, idx) => (
+          {(validation.issues || []).map((issue, idx) => (
             <div key={idx}>- {issue.type}: {issue.message}</div>
           ))}
+        </div>
+      )}
+
+      {logicValidation && (
+        <div className="wf-logic-card">
+          <div className="wf-logic-head">
+            <strong>Adversarial Residual Logic Verification</strong>
+            <span className={`wf-risk wf-risk-${logicValidation.risk_level || 'low'}`}>
+              Risk: {logicValidation.risk_level || 'low'}
+            </span>
+          </div>
+
+          {(logicValidation.plan_outline || []).length > 0 && (
+            <div className="wf-field">
+              <label>Plan Outline</label>
+              <div className="wf-model-list">
+                {logicValidation.plan_outline.map((step) => (
+                  <div className="wf-model-item" key={step.id}>
+                    <div><strong>{step.id}</strong> <span className="wf-muted">{step.name}</span></div>
+                    <div className="wf-muted">{step.description}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(logicValidation.precondition_issues || []).length > 0 && (
+            <div className="wf-field">
+              <label>Precondition Gaps</label>
+              {(logicValidation.precondition_issues || []).map((issue, idx) => (
+                <div className="wf-logic-issue" key={`pre-${idx}`}>- {issue.type}: {issue.message}</div>
+              ))}
+            </div>
+          )}
+
+          {(logicValidation.attack_findings || []).length > 0 && (
+            <div className="wf-field">
+              <label>Adversarial Findings</label>
+              {(logicValidation.attack_findings || []).map((issue, idx) => (
+                <div className="wf-logic-issue" key={`atk-${idx}`}>- {issue.type}: {issue.message}</div>
+              ))}
+            </div>
+          )}
+
+          {(logicValidation.residual_targets || []).length > 0 && (
+            <div className="wf-field">
+              <label>Residual Repair Targets</label>
+              <div className="wf-model-list">
+                {logicValidation.residual_targets.map((target) => (
+                  <div className="wf-model-item" key={target.step_id}>
+                    <div><strong>{target.step_id}</strong> <span className="wf-muted">{target.step_name}</span></div>
+                    <div className="wf-muted">{(target.issue_types || []).join(', ')}</div>
+                    {(target.messages || []).map((message, idx) => (
+                      <div className="wf-logic-issue" key={`${target.step_id}-${idx}`}>- {message}</div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {logicValidation.repair_prompt && (
+            <div className="wf-field">
+              <label>Residual Repair Prompt</label>
+              <pre className="wf-pre">{logicValidation.repair_prompt}</pre>
+            </div>
+          )}
         </div>
       )}
     </div>

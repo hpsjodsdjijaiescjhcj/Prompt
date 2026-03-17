@@ -1170,6 +1170,51 @@ body {
   border: 1px solid rgba(239, 68, 68, 0.25);
 }
 
+.wf-logic-card {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  padding: 12px;
+}
+
+.wf-logic-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.wf-risk {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.wf-risk-low {
+  background: rgba(34, 197, 94, 0.12);
+  color: #15803d;
+}
+
+.wf-risk-medium {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+.wf-risk-high {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.wf-logic-issue {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
 .wf-error {
   margin-bottom: 8px;
   color: var(--error);
