@@ -287,7 +287,7 @@ That is exactly what makes it a credible base for future agent automation.
 
 ---
 
-## One-Sentence Summary
+## Summary
 
 **TaskForge is an orchestration layer that forges vague user intent into executable AI tasks.**
 
