@@ -7,6 +7,7 @@ from recommender import recommend_models
 from .adversarial_validator import run_adversarial_residual_validation
 from .executor import run_executor
 from .inference import apply_inferred_defaults, infer_initial_answers
+from .plan_graph import build_plan_graph, validate_plan_graph
 from .router import get_handler, route_task
 from .store import store
 
@@ -137,6 +138,11 @@ def confirm_spec(session_id: str, spec: dict) -> dict:
         "recommended_models": _recommend_models_for_spec(spec, session.get("text", "")),
     }
     prompts = handler.prompts(spec, route)
+    plan_graph = build_plan_graph(spec)
+    if plan_graph:
+        preflight_validation = validate_plan_graph(spec, plan_graph)
+    else:
+        preflight_validation = run_adversarial_residual_validation(spec, "", phase="preflight")
     new_state = "done" if selected == "prompt_only" else "executing"
 
     session = store.update(
@@ -145,9 +151,12 @@ def confirm_spec(session_id: str, spec: dict) -> dict:
         spec_draft=spec,
         route=route,
         generated_prompts=prompts,
+        plan_graph=plan_graph,
         state=new_state,
+        preflight_validation=preflight_validation,
         execution=None,
         validation=None,
+        logic_validation=None,
         final_output=None,
     )
 
@@ -156,6 +165,8 @@ def confirm_spec(session_id: str, spec: dict) -> dict:
         "state": session["state"],
         "route": route,
         "generated_prompts": prompts,
+        "plan_graph": plan_graph,
+        "preflight_validation": preflight_validation,
         "execution": session.get("execution"),
     }
 
@@ -166,6 +177,20 @@ def execute_session(session_id: str, executor: str, executor_config: dict | None
         raise ValueError("Task type 'other' is not supported by workflow execution.")
     if not session.get("spec"):
         raise ValueError("Spec is not confirmed yet.")
+    plan_graph = session.get("plan_graph") or build_plan_graph(session["spec"])
+    preflight_validation = session.get("preflight_validation")
+    if not preflight_validation:
+        if plan_graph:
+            preflight_validation = validate_plan_graph(session["spec"], plan_graph)
+        else:
+            preflight_validation = run_adversarial_residual_validation(
+                session["spec"],
+                "",
+                phase="preflight",
+            )
+    if not preflight_validation.get("pass"):
+        store.update(session_id, preflight_validation=preflight_validation, plan_graph=plan_graph)
+        raise ValueError("Pre-execution logic validation failed. Fix the residual targets before execution.")
 
     prompt = _select_prompt(session, executor)
     result = run_executor(executor, prompt, executor_config or {}, {"session_id": session_id})
@@ -180,6 +205,8 @@ def execute_session(session_id: str, executor: str, executor_config: dict | None
     session = store.update(
         session_id,
         state=state,
+        plan_graph=plan_graph,
+        preflight_validation=preflight_validation,
         execution=result,
         executor_config=executor_config or {},
     )
@@ -187,6 +214,8 @@ def execute_session(session_id: str, executor: str, executor_config: dict | None
     return {
         "session_id": session_id,
         "state": session["state"],
+        "plan_graph": session.get("plan_graph"),
+        "preflight_validation": preflight_validation,
         "execution": result,
     }
 
@@ -208,9 +237,15 @@ def validate_session_output(
 
     execution = session.get("execution") or {}
     current_output = output if output is not None else execution.get("raw_output", "")
+    plan_graph = session.get("plan_graph")
 
     report = handler.validate(spec, current_output)
-    logic_validation = run_adversarial_residual_validation(spec, current_output)
+    logic_validation = run_adversarial_residual_validation(
+        spec,
+        current_output,
+        phase="post_execution",
+        plan_graph=plan_graph,
+    )
     report = _merge_logic_validation(report, logic_validation)
     final_output = current_output
 
@@ -231,7 +266,12 @@ def validate_session_output(
             final_output = revised["raw_output"]
             execution = revised
             report = handler.validate(spec, final_output)
-            logic_validation = run_adversarial_residual_validation(spec, final_output)
+            logic_validation = run_adversarial_residual_validation(
+                spec,
+                final_output,
+                phase="post_execution",
+                plan_graph=plan_graph,
+            )
             report = _merge_logic_validation(report, logic_validation)
 
     session = store.update(

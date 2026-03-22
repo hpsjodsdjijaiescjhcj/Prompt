@@ -202,11 +202,25 @@ The system can still check whether the output meets the original goal and constr
 
 At the current stage, validation already includes a first-phase prototype of:
 
+- pre-execution plan graph validation for `email` and `generic`
+- pre-execution logic gating
 - plan-outline generation
 - adversarial failure discovery
 - residual repair targeting
 
 In other words, the system is starting to verify not only whether an answer exists, but also where its logic is weak and which part should be repaired first.
+
+The validation layer is now explicitly split into two stages:
+
+- **Pre-execution graph validation**
+  - builds a `plan_graph` from the confirmed spec for `email` and `generic`
+  - checks required steps, dependency closure, missing preconditions, and fragile edges
+  - blocks execution when the graph is not executable enough
+- **Post-execution output validation**
+  - checks the delivered output against the spec, acceptance criteria, and adversarial logic checks
+  - points to residual repair targets after generation
+
+This is an operational first step toward adversarial residual logic verification. It is **not yet** full symbolic planning, PDDL compilation, multi-agent debate, or automatic local repair.
 
 ---
 
