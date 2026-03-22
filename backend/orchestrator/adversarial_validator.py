@@ -3,16 +3,22 @@ from __future__ import annotations
 import re
 
 
-def run_adversarial_residual_validation(spec: dict, output: str) -> dict:
+def run_adversarial_residual_validation(
+    spec: dict,
+    output: str,
+    phase: str = "post_execution",
+    plan_graph: dict | None = None,
+) -> dict:
     task_type = spec.get("task_type", "generic")
-    plan_outline = _build_plan_outline(spec)
+    plan_outline = _build_plan_outline(spec, plan_graph)
     precondition_issues = _check_preconditions(spec)
-    attack_findings = _run_attack_checks(spec, output)
+    attack_findings = _run_attack_checks(spec, output, phase, plan_graph)
     residual_targets = _collect_residual_targets(plan_outline, precondition_issues, attack_findings)
     pass_check = not precondition_issues and not attack_findings
 
     return {
         "pass": pass_check,
+        "phase": phase,
         "risk_level": _risk_level(precondition_issues, attack_findings),
         "plan_outline": plan_outline,
         "precondition_issues": precondition_issues,
@@ -22,7 +28,18 @@ def run_adversarial_residual_validation(spec: dict, output: str) -> dict:
     }
 
 
-def _build_plan_outline(spec: dict) -> list[dict]:
+def _build_plan_outline(spec: dict, plan_graph: dict | None = None) -> list[dict]:
+    if plan_graph:
+        return [
+            {
+                "id": node["id"],
+                "name": node.get("kind", ""),
+                "description": node.get("label", ""),
+                "depends_on": node.get("depends_on", []),
+            }
+            for node in plan_graph.get("nodes", [])
+        ]
+
     task_type = spec.get("task_type", "generic")
     if task_type == "email":
         steps = [
@@ -101,11 +118,52 @@ def _check_preconditions(spec: dict) -> list[dict]:
     return issues
 
 
-def _run_attack_checks(spec: dict, output: str) -> list[dict]:
+def _run_attack_checks(spec: dict, output: str, phase: str, plan_graph: dict | None = None) -> list[dict]:
     findings = []
     task_type = spec.get("task_type", "generic")
     constraints = spec.get("constraints") or {}
     output_text = output or ""
+
+    if phase == "preflight":
+        if task_type == "email":
+            if constraints.get("must_include_deadline") and not _spec_has_deadline_commitment(spec):
+                findings.append(
+                    _issue(
+                        "deadline_unplanned",
+                        "Preflight check: the spec requires a deadline, but the plan does not encode a concrete deadline commitment.",
+                        _resolve_step_id(plan_graph, "commitment", "s3"),
+                    )
+                )
+            if constraints.get("must_include_bullets") and not _spec_has_bullet_focus(spec):
+                findings.append(
+                    _issue(
+                        "bullet_unplanned",
+                        "Preflight check: the spec requires action bullets, but the plan does not state what those bullets should enumerate.",
+                        _resolve_step_id(plan_graph, "commitment", "s3"),
+                    )
+                )
+        elif task_type == "writing":
+            if not _spec_has_core_message(spec):
+                findings.append(
+                    _issue(
+                        "weak_message_frame",
+                        "Preflight check: the writing spec does not yet encode enough core message context to survive style generation.",
+                        _resolve_step_id(plan_graph, "context", "s2"),
+                    )
+                )
+        elif task_type == "code":
+            if not _spec_has_verification_path(spec):
+                findings.append(
+                    _issue(
+                        "verification_unplanned",
+                        "Preflight check: the code plan does not describe how success will be verified.",
+                        _resolve_step_id(plan_graph, "validation", "s3"),
+                    )
+                )
+        else:
+            if not _spec_has_output_shape(spec):
+                findings.append(_issue("weak_output_contract", "Preflight check: the generic task lacks a concrete output shape, making downstream execution unstable.", _resolve_step_id(plan_graph, "output", "s3")))
+        return findings
 
     if not output_text.strip():
         findings.append(_issue("empty_delivery", "No output exists, so the plan cannot survive execution.", "s3"))
@@ -113,11 +171,11 @@ def _run_attack_checks(spec: dict, output: str) -> list[dict]:
 
     if task_type == "email":
         if constraints.get("must_include_deadline") and not _contains_deadline(output_text):
-            findings.append(_issue("deadline_break", "Adversarial check: if the recipient delays, the plan has no enforceable deadline.", "s3"))
+            findings.append(_issue("deadline_break", "Adversarial check: if the recipient delays, the plan has no enforceable deadline.", _resolve_step_id(plan_graph, "commitment", "s3")))
         if constraints.get("must_include_bullets") and not _contains_bullet_list(output_text):
-            findings.append(_issue("bullet_break", "Adversarial check: required action items are not explicitly enumerable.", "s3"))
+            findings.append(_issue("bullet_break", "Adversarial check: required action items are not explicitly enumerable.", _resolve_step_id(plan_graph, "commitment", "s3")))
         if not _contains_response_request(output_text):
-            findings.append(_issue("loop_not_closed", "Adversarial check: the email does not force a concrete reply path.", "s4"))
+            findings.append(_issue("loop_not_closed", "Adversarial check: the email does not force a concrete reply path.", _resolve_step_id(plan_graph, "closure", "s4")))
     elif task_type == "writing":
         if spec.get("must_include") and not _covers_list(output_text, spec.get("must_include") or []):
             findings.append(_issue("content_drop", "Adversarial check: at least one required content point disappeared in the final text.", "s2"))
@@ -135,6 +193,15 @@ def _run_attack_checks(spec: dict, output: str) -> list[dict]:
             findings.append(_issue("generic_answer", "Adversarial check: the response is too generic to survive a hostile edge-case review.", "s2"))
 
     return findings
+
+
+def _resolve_step_id(plan_graph: dict | None, kind: str, fallback: str) -> str:
+    if not plan_graph:
+        return fallback
+    for node in plan_graph.get("nodes", []):
+        if node.get("kind") == kind:
+            return node["id"]
+    return fallback
 
 
 def _collect_residual_targets(plan_outline: list[dict], preconditions: list[dict], attacks: list[dict]) -> list[dict]:
@@ -266,3 +333,41 @@ def _looks_overly_generic(output: str) -> bool:
     ]
     lower = output.lower()
     return len(output.strip()) < 80 or any(marker in lower for marker in weak_markers)
+
+
+def _spec_has_deadline_commitment(spec: dict) -> bool:
+    text_sources = [
+        spec.get("objective", ""),
+        (spec.get("context") or {}).get("background", ""),
+        "\n".join(spec.get("must_include") or []),
+        "\n".join((spec.get("acceptance_criteria") or [])),
+    ]
+    merged = "\n".join(text_sources)
+    return _contains_deadline(merged)
+
+
+def _spec_has_bullet_focus(spec: dict) -> bool:
+    must_include = spec.get("must_include") or []
+    output_format = spec.get("output_format") or {}
+    sections = output_format.get("sections") or []
+    return bool(must_include or sections)
+
+
+def _spec_has_core_message(spec: dict) -> bool:
+    context = spec.get("context") or {}
+    background = (context.get("background") or "").strip()
+    must_include = spec.get("must_include") or []
+    return len(background) >= 12 or len(must_include) >= 1
+
+
+def _spec_has_verification_path(spec: dict) -> bool:
+    acceptance = " ".join(spec.get("acceptance_criteria") or []).lower()
+    constraints = " ".join((spec.get("constraints") or {}).get("hard_constraints") or []).lower()
+    return "test" in acceptance or "lint" in acceptance or "test" in constraints or "lint" in constraints
+
+
+def _spec_has_output_shape(spec: dict) -> bool:
+    output_format = spec.get("output_format") or {}
+    output_type = str(output_format.get("type", "")).strip()
+    sections = output_format.get("sections") or []
+    return bool(output_type or sections)

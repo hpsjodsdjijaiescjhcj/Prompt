@@ -39,6 +39,8 @@ def new_session_record(
         "route": None,
         "generated_prompts": [],
         "execution": None,
+        "plan_graph": None,
+        "preflight_validation": None,
         "validation": None,
         "logic_validation": None,
         "final_output": None,

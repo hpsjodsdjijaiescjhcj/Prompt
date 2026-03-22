@@ -24,7 +24,10 @@ export default function WorkflowResult({ data, onExecute, onValidate, loading })
 
   const execution = data?.execution;
   const validation = data?.validation;
+  const preflightValidation = data?.preflight_validation;
+  const planGraph = preflightValidation?.plan_graph || data?.plan_graph;
   const logicValidation = validation?.logic_validation;
+  const canExecute = executor !== 'prompt_only' && (preflightValidation?.pass ?? true);
 
   return (
     <div className="wf-card">
@@ -91,7 +94,7 @@ export default function WorkflowResult({ data, onExecute, onValidate, loading })
         <button
           type="button"
           className="action-btn"
-          disabled={loading || executor === 'prompt_only'}
+          disabled={loading || !canExecute}
           onClick={() => onExecute(executor, config)}
         >
           {loading ? 'Running...' : 'Run Execution'}
@@ -114,6 +117,109 @@ export default function WorkflowResult({ data, onExecute, onValidate, loading })
         </button>
       </div>
 
+      {preflightValidation && (
+        <div className={`wf-validation ${preflightValidation.pass ? 'pass' : 'fail'}`}>
+          <strong>Pre-Execution Logic Gate: {preflightValidation.pass ? 'PASS' : 'FAIL'}</strong>
+          {(preflightValidation.precondition_issues || []).map((issue, idx) => (
+            <div key={`preflight-pre-${idx}`}>- {issue.type}: {issue.message}</div>
+          ))}
+          {(preflightValidation.attack_findings || []).map((issue, idx) => (
+            <div key={`preflight-legacy-${idx}`}>- {issue.type}: {issue.message}</div>
+          ))}
+          {(preflightValidation.graph_findings || []).map((issue, idx) => (
+            <div key={`preflight-atk-${idx}`}>- {issue.type}: {issue.message}</div>
+          ))}
+          {(preflightValidation.broken_dependencies || []).map((issue, idx) => (
+            <div key={`preflight-broken-${idx}`}>- {issue.type}: {issue.message}</div>
+          ))}
+        </div>
+      )}
+
+      {planGraph && (
+        <div className="wf-logic-card">
+          <div className="wf-logic-head">
+            <strong>Pre-Execution Plan Graph</strong>
+            <span className={`wf-risk wf-risk-${preflightValidation?.risk_level || 'low'}`}>
+              Risk: {preflightValidation?.risk_level || 'low'}
+            </span>
+          </div>
+
+          <div className="wf-plan-graph">
+            {(planGraph.nodes || []).map((node) => {
+              const status = preflightValidation?.node_statuses?.[node.id]?.status || 'pass';
+              const missingInputs = preflightValidation?.node_statuses?.[node.id]?.missing_inputs || [];
+              const unmetDependencies = preflightValidation?.node_statuses?.[node.id]?.unmet_dependencies || [];
+              const nodeTargets = (preflightValidation?.residual_targets || []).filter((target) => target.target_id === node.id);
+
+              return (
+                <div className={`wf-plan-node ${status}`} key={node.id}>
+                  <div className="wf-plan-node-head">
+                    <div>
+                      <strong>{node.label}</strong>
+                      <div className="wf-muted">{node.id} · {node.kind}</div>
+                    </div>
+                    <span className={`wf-plan-badge ${status}`}>{status}</span>
+                  </div>
+
+                  {(node.depends_on || []).length > 0 && (
+                    <div className="wf-plan-meta">
+                      Depends on: {(node.depends_on || []).join(', ')}
+                    </div>
+                  )}
+
+                  {(node.inputs || []).length > 0 && (
+                    <div className="wf-plan-meta">
+                      Inputs: {(node.inputs || []).join(', ')}
+                    </div>
+                  )}
+
+                  {missingInputs.length > 0 && (
+                    <div className="wf-logic-issue">Missing inputs: {missingInputs.join(', ')}</div>
+                  )}
+                  {unmetDependencies.length > 0 && (
+                    <div className="wf-logic-issue">Broken dependencies: {unmetDependencies.join(', ')}</div>
+                  )}
+
+                  {nodeTargets.map((target) => (
+                    <div className="wf-plan-target" key={`${node.id}-${target.target_id}`}>
+                      <div className="wf-muted">{(target.issue_types || []).join(', ')}</div>
+                      {(target.messages || []).map((message, idx) => (
+                        <div className="wf-logic-issue" key={`${node.id}-${idx}`}>- {message}</div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+
+          {(planGraph.edges || []).length > 0 && (
+            <div className="wf-field">
+              <label>Dependencies</label>
+              <div className="wf-model-list">
+                {planGraph.edges.map((edge) => {
+                  const edgeId = `${edge.from}->${edge.to}`;
+                  const edgeOk = preflightValidation?.edge_statuses?.[edgeId]?.pass;
+                  return (
+                    <div className={`wf-model-item ${edgeOk ? '' : 'wf-edge-fail'}`} key={edgeId}>
+                      <div><strong>{edge.from}</strong> -> <strong>{edge.to}</strong></div>
+                      <div className="wf-muted">{edge.reason}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {preflightValidation?.repair_prompt && (
+            <div className="wf-field">
+              <label>Plan Graph Repair Prompt</label>
+              <pre className="wf-pre">{preflightValidation.repair_prompt}</pre>
+            </div>
+          )}
+        </div>
+      )}
+
       {(execution?.raw_output || data?.final_output) && (
         <div className="wf-field">
           <label>Output</label>
@@ -133,7 +239,7 @@ export default function WorkflowResult({ data, onExecute, onValidate, loading })
       {logicValidation && (
         <div className="wf-logic-card">
           <div className="wf-logic-head">
-            <strong>Adversarial Residual Logic Verification</strong>
+            <strong>Post-Execution Validation</strong>
             <span className={`wf-risk wf-risk-${logicValidation.risk_level || 'low'}`}>
               Risk: {logicValidation.risk_level || 'low'}
             </span>
