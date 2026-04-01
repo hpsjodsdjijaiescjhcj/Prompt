@@ -171,6 +171,17 @@ TaskForge currently centers around a simple workflow:
 
 `Clarify -> Align -> Execute -> Validate`
 
+The current implementation is also moving toward a more explicit internal backbone for this workflow:
+
+- a **Unified Task Spec shell** that wraps task-specific specs with a stable product-level structure
+- a **Spec Gap Detector** that decides whether the task is ready or still missing critical fields
+- a **Risk Policy** that decides whether the task can proceed, needs clarification, or needs confirmation
+- a **Lightweight Validator** that performs low-cost pre-execution and post-execution checks before heavier validation layers
+- a lightweight **HookManager** that can inject logic at lifecycle events (`before_clarify`, `after_spec_generated`, `before_execution`, `after_execution`, `before_final_output`, `on_validation_failed`)
+- two-layer memory (`ProjectMemory` + `RunMemory`) so long-term preferences and run-time state are tracked separately
+- a built-in **Skill Registry** (`cold_email`, `resume_bullet`, `sop_paragraph`, `task_breakdown`) for reusable workflow intent patterns
+- a one-pass **Repair Loop** that can attempt a revision when validation fails and a runnable executor is available
+
 ### Clarify
 
 The system first checks whether the request is specific enough.  
@@ -221,6 +232,23 @@ The validation layer is now explicitly split into two stages:
   - points to residual repair targets after generation
 
 This is an operational first step toward adversarial residual logic verification. It is **not yet** full symbolic planning, PDDL compilation, multi-agent debate, or automatic local repair.
+
+In practice, validation is now layered:
+
+- a lightweight validator for spec completeness, basic constraints, and goal coverage
+- explicit pre-execution plan graph validation for `email` and `generic`
+- post-execution output validation and adversarial residual logic checks
+
+Lifecycle hooks and memory are now part of the orchestration runtime:
+
+- `ProjectMemory`: persistent preferences (for example output style and clarification policy)
+- `RunMemory`: per-session events, snapshots, and validation failure traces
+- `Hook trace`: event-level execution trace exposed in workflow responses for explainability
+
+Skill and repair are now exposed in workflow responses as first-class runtime signals:
+
+- `skill_selection` and `skill_suggestions`: lightweight skill routing hints
+- `repair_result`: whether a repair attempt was triggered, succeeded, or skipped with a reason (`not_requested`, `executor_not_runnable`, etc.)
 
 ---
 
