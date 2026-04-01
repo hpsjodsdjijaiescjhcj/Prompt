@@ -328,6 +328,28 @@ body {
   border-color: rgba(239, 68, 68, 0.35);
 }
 
+.wf-risk-tag-low {
+  color: #166534;
+}
+
+.wf-risk-tag-medium {
+  color: #b45309;
+}
+
+.wf-risk-tag-high {
+  color: #b91c1c;
+}
+
+.wf-shell-card {
+  margin-top: 12px;
+}
+
+.wf-shell-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .action-btn:hover {
   transform: translateY(-1px);
   box-shadow: var(--shadow-md);

@@ -6,10 +6,28 @@ from recommender import recommend_models
 
 from .adversarial_validator import run_adversarial_residual_validation
 from .executor import run_executor
+from .hooks import build_default_hook_manager
 from .inference import apply_inferred_defaults, infer_initial_answers
+from .lightweight_validator import validate_output_lightweight, validate_task_spec_lightweight
+from .memory import append_run_note, initialize_project_memory, initialize_run_memory, merge_run_memory
 from .plan_graph import build_plan_graph, validate_plan_graph
+from .repair_loop import attempt_repair_once, build_repair_plan
+from .risk_policy import assess_risk
 from .router import get_handler, route_task
+from .skills import recommend_skills, select_primary_skill
+from .spec_gap_detector import detect_spec_gaps
 from .store import store
+from .task_spec_shell import apply_shell_annotations, build_task_spec_shell
+from .workflow_schemas import (
+    assert_response_shape,
+    clarify_response,
+    confirm_response,
+    execute_response,
+    start_response,
+    validate_response,
+)
+
+HOOKS = build_default_hook_manager()
 
 
 class ClarifyValidationError(ValueError):
@@ -29,28 +47,72 @@ def start_workflow(
         context=context,
         task_type=task_type,
     )
+    project_memory = initialize_project_memory(context)
+    run_memory = initialize_run_memory(context)
+    base_shell = build_task_spec_shell(
+        session_id=session["session_id"],
+        raw_request=text,
+        task_type=task_type,
+        state="input_received",
+        inferred_answers=inferred,
+    )
+    skill_selection = select_primary_skill(task_type, text)
+    skill_suggestions = recommend_skills(task_type, text, top_n=2)
+    hook_ctx = HOOKS.emit(
+        "before_clarify",
+        {
+            "session_id": session["session_id"],
+            "task_type": task_type,
+            "task_spec_shell": base_shell,
+            "project_memory": project_memory,
+            "run_memory": run_memory,
+            "hook_trace": [],
+        },
+    )
+    run_memory = merge_run_memory(run_memory, hook_ctx.get("run_memory"))
+    hook_trace = list(hook_ctx.get("hook_trace") or [])
 
     if task_type == "other" or not handler:
+        spec_gap = detect_spec_gaps(task_type, text, inferred_answers=inferred)
+        risk_assessment = assess_risk(base_shell, spec_gap, preferred_executor)
+        task_spec_shell = apply_shell_annotations(base_shell, spec_gap, risk_assessment)
+        run_memory = append_run_note(run_memory, "Task type routed to 'other'; workflow kept in spec_ready without orchestration.")
         session = store.update(
             session["session_id"],
             state="spec_ready",
             clarify_form_schema=None,
             spec_draft=None,
             inferred_answers=inferred,
+            task_spec_shell=task_spec_shell,
+            spec_gap=spec_gap,
+            risk_assessment=risk_assessment,
+            skill_selection=skill_selection,
+            skill_suggestions=skill_suggestions,
+            project_memory=project_memory,
+            run_memory=run_memory,
+            hook_trace=hook_trace,
             routing_confidence=confidence,
         )
-        return {
-            "session_id": session["session_id"],
-            "state": session["state"],
-            "task_type": task_type,
-            "clarify_form_schema": None,
-            "spec_draft": None,
-        }
+        payload = start_response(session)
+        assert_response_shape("start", payload)
+        return payload
 
     # generic 但语义已经很明确时，直接产出 spec 草案，避免让用户填一整页表单。
     if task_type == "generic" and _looks_specific_request(text) and _generic_can_skip_clarify(text, inferred):
         default_answers = _default_generic_answers(text, inferred)
         spec = handler.build_spec(text, default_answers)
+        spec_gap = detect_spec_gaps(task_type, text, inferred_answers=default_answers, spec=spec)
+        task_spec_shell = build_task_spec_shell(
+            session_id=session["session_id"],
+            raw_request=text,
+            task_type=task_type,
+            state="spec_ready",
+            spec=spec,
+            inferred_answers=default_answers,
+        )
+        risk_assessment = assess_risk(task_spec_shell, spec_gap, preferred_executor)
+        task_spec_shell = apply_shell_annotations(task_spec_shell, spec_gap, risk_assessment)
+        run_memory = append_run_note(run_memory, "Generic request considered specific enough; clarify step skipped.")
         session = store.update(
             session["session_id"],
             state="spec_ready",
@@ -58,21 +120,35 @@ def start_workflow(
             clarify_answers=default_answers,
             inferred_answers=inferred,
             spec_draft=spec,
+            task_spec_shell=task_spec_shell,
+            spec_gap=spec_gap,
+            risk_assessment=risk_assessment,
+            skill_selection=skill_selection,
+            skill_suggestions=skill_suggestions,
+            project_memory=project_memory,
+            run_memory=run_memory,
+            hook_trace=hook_trace,
             routing_confidence=confidence,
         )
-        return {
-            "session_id": session["session_id"],
-            "state": session["state"],
-            "task_type": task_type,
-            "clarify_form_schema": None,
-            "spec_draft": spec,
-        }
+        payload = start_response(session)
+        assert_response_shape("start", payload)
+        return payload
 
     schema = handler.clarify_schema(text)
     schema = _with_common_clarify_fields(schema, task_type)
     schema = apply_inferred_defaults(schema, inferred)
     schema, missing_slots = _build_minimal_clarify_schema(schema, task_type, inferred, text)
     missing_slot_hints = _build_missing_slot_hints(missing_slots, task_type)
+    spec_gap = detect_spec_gaps(
+        task_type,
+        text,
+        schema=schema,
+        inferred_answers=inferred,
+        known_missing_fields=missing_slots,
+    )
+    risk_assessment = assess_risk(base_shell, spec_gap, preferred_executor)
+    task_spec_shell = apply_shell_annotations(base_shell, spec_gap, risk_assessment)
+    run_memory = append_run_note(run_memory, "Clarification required before moving to spec_ready.")
     session = store.update(
         session["session_id"],
         state="clarifying",
@@ -80,17 +156,19 @@ def start_workflow(
         inferred_answers=inferred,
         missing_slots=missing_slots,
         missing_slot_hints=missing_slot_hints,
+        task_spec_shell=task_spec_shell,
+        spec_gap=spec_gap,
+        risk_assessment=risk_assessment,
+        skill_selection=skill_selection,
+        skill_suggestions=skill_suggestions,
+        project_memory=project_memory,
+        run_memory=run_memory,
+        hook_trace=hook_trace,
         routing_confidence=confidence,
     )
-    return {
-        "session_id": session["session_id"],
-        "state": session["state"],
-        "task_type": task_type,
-        "clarify_form_schema": schema,
-        "missing_slots": missing_slots,
-        "missing_slot_hints": missing_slot_hints,
-        "spec_draft": None,
-    }
+    payload = start_response(session)
+    assert_response_shape("start", payload)
+    return payload
 
 
 def submit_clarifications(session_id: str, answers: dict) -> dict:
@@ -106,18 +184,36 @@ def submit_clarifications(session_id: str, answers: dict) -> dict:
     )
     handler = _must_handler(session["task_type"])
     spec = handler.build_spec(session["text"], normalized_answers)
+    spec_gap = detect_spec_gaps(session["task_type"], session["text"], inferred_answers=normalized_answers, spec=spec)
+    task_spec_shell = build_task_spec_shell(
+        session_id=session_id,
+        raw_request=session["text"],
+        task_type=session["task_type"],
+        state="spec_ready",
+        spec=spec,
+        inferred_answers=normalized_answers,
+    )
+    risk_assessment = assess_risk(task_spec_shell, spec_gap, session.get("preferred_executor"))
+    task_spec_shell = apply_shell_annotations(task_spec_shell, spec_gap, risk_assessment)
+    skill_selection = select_primary_skill(session["task_type"], session["text"])
+    skill_suggestions = recommend_skills(session["task_type"], session["text"], top_n=2)
+    run_memory = append_run_note(session.get("run_memory"), "Clarification answers submitted and spec draft generated.")
 
     session = store.update(
         session_id,
         clarify_answers=normalized_answers,
         spec_draft=spec,
+        task_spec_shell=task_spec_shell,
+        spec_gap=spec_gap,
+        risk_assessment=risk_assessment,
+        skill_selection=skill_selection,
+        skill_suggestions=skill_suggestions,
+        run_memory=run_memory,
         state="spec_ready",
     )
-    return {
-        "session_id": session_id,
-        "state": session["state"],
-        "spec_draft": session["spec_draft"],
-    }
+    payload = clarify_response(session)
+    assert_response_shape("clarify", payload)
+    return payload
 
 
 def confirm_spec(session_id: str, spec: dict) -> dict:
@@ -138,6 +234,34 @@ def confirm_spec(session_id: str, spec: dict) -> dict:
         "recommended_models": _recommend_models_for_spec(spec, session.get("text", "")),
     }
     prompts = handler.prompts(spec, route)
+    spec_gap = detect_spec_gaps(session["task_type"], session.get("text", ""), spec=spec)
+    task_spec_shell = build_task_spec_shell(
+        session_id=session_id,
+        raw_request=session.get("text", ""),
+        task_type=spec.get("task_type") or session["task_type"],
+        state="spec_ready",
+        spec=spec,
+        inferred_answers=session.get("clarify_answers") or session.get("inferred_answers") or {},
+    )
+    risk_assessment = assess_risk(task_spec_shell, spec_gap, selected)
+    task_spec_shell = apply_shell_annotations(task_spec_shell, spec_gap, risk_assessment)
+    skill_selection = select_primary_skill(session["task_type"], session.get("text", ""))
+    skill_suggestions = recommend_skills(session["task_type"], session.get("text", ""), top_n=2)
+    lightweight_spec_validation = validate_task_spec_lightweight(task_spec_shell, spec, spec_gap)
+    hook_ctx = HOOKS.emit(
+        "after_spec_generated",
+        {
+            "session_id": session_id,
+            "task_type": session["task_type"],
+            "task_spec_shell": task_spec_shell,
+            "project_memory": session.get("project_memory") or {},
+            "run_memory": session.get("run_memory") or {},
+            "hook_trace": session.get("hook_trace") or [],
+        },
+    )
+    run_memory = merge_run_memory(session.get("run_memory"), hook_ctx.get("run_memory"))
+    run_memory = append_run_note(run_memory, "Spec confirmed and prompts generated.")
+    hook_trace = list(hook_ctx.get("hook_trace") or [])
     plan_graph = build_plan_graph(spec)
     if plan_graph:
         preflight_validation = validate_plan_graph(spec, plan_graph)
@@ -149,26 +273,27 @@ def confirm_spec(session_id: str, spec: dict) -> dict:
         session_id,
         spec=spec,
         spec_draft=spec,
+        task_spec_shell=task_spec_shell,
+        spec_gap=spec_gap,
+        risk_assessment=risk_assessment,
+        skill_selection=skill_selection,
+        skill_suggestions=skill_suggestions,
+        run_memory=run_memory,
+        hook_trace=hook_trace,
         route=route,
         generated_prompts=prompts,
         plan_graph=plan_graph,
         state=new_state,
+        lightweight_spec_validation=lightweight_spec_validation,
         preflight_validation=preflight_validation,
         execution=None,
         validation=None,
         logic_validation=None,
         final_output=None,
     )
-
-    return {
-        "session_id": session_id,
-        "state": session["state"],
-        "route": route,
-        "generated_prompts": prompts,
-        "plan_graph": plan_graph,
-        "preflight_validation": preflight_validation,
-        "execution": session.get("execution"),
-    }
+    payload = confirm_response(session)
+    assert_response_shape("confirm", payload)
+    return payload
 
 
 def execute_session(session_id: str, executor: str, executor_config: dict | None) -> dict:
@@ -177,6 +302,11 @@ def execute_session(session_id: str, executor: str, executor_config: dict | None
         raise ValueError("Task type 'other' is not supported by workflow execution.")
     if not session.get("spec"):
         raise ValueError("Spec is not confirmed yet.")
+    risk_assessment = session.get("risk_assessment") or {}
+    if risk_assessment.get("decision") == "needs_clarification":
+        raise ValueError("Task still needs clarification before execution.")
+    if risk_assessment.get("decision") == "reject":
+        raise ValueError("Current risk policy rejects executing this task.")
     plan_graph = session.get("plan_graph") or build_plan_graph(session["spec"])
     preflight_validation = session.get("preflight_validation")
     if not preflight_validation:
@@ -193,7 +323,39 @@ def execute_session(session_id: str, executor: str, executor_config: dict | None
         raise ValueError("Pre-execution logic validation failed. Fix the residual targets before execution.")
 
     prompt = _select_prompt(session, executor)
+    hook_ctx = HOOKS.emit(
+        "before_execution",
+        {
+            "session_id": session_id,
+            "executor": executor,
+            "task_type": session["task_type"],
+            "task_spec_shell": session.get("task_spec_shell") or {},
+            "project_memory": session.get("project_memory") or {},
+            "run_memory": session.get("run_memory") or {},
+            "hook_trace": session.get("hook_trace") or [],
+        },
+    )
+    run_memory = merge_run_memory(session.get("run_memory"), hook_ctx.get("run_memory"))
+    run_memory = append_run_note(run_memory, f"Execution started with executor={executor}.")
+    hook_trace = list(hook_ctx.get("hook_trace") or [])
+
     result = run_executor(executor, prompt, executor_config or {}, {"session_id": session_id})
+    hook_ctx = HOOKS.emit(
+        "after_execution",
+        {
+            "session_id": session_id,
+            "executor": executor,
+            "task_type": session["task_type"],
+            "execution": result,
+            "task_spec_shell": session.get("task_spec_shell") or {},
+            "project_memory": session.get("project_memory") or {},
+            "run_memory": run_memory,
+            "hook_trace": hook_trace,
+        },
+    )
+    run_memory = merge_run_memory(run_memory, hook_ctx.get("run_memory"))
+    run_memory = append_run_note(run_memory, "Execution finished.")
+    hook_trace = list(hook_ctx.get("hook_trace") or [])
 
     if result.get("error"):
         state = "done"
@@ -209,15 +371,12 @@ def execute_session(session_id: str, executor: str, executor_config: dict | None
         preflight_validation=preflight_validation,
         execution=result,
         executor_config=executor_config or {},
+        run_memory=run_memory,
+        hook_trace=hook_trace,
     )
-
-    return {
-        "session_id": session_id,
-        "state": session["state"],
-        "plan_graph": session.get("plan_graph"),
-        "preflight_validation": preflight_validation,
-        "execution": result,
-    }
+    payload = execute_response(session)
+    assert_response_shape("execute", payload)
+    return payload
 
 
 def validate_session_output(
@@ -238,62 +397,126 @@ def validate_session_output(
     execution = session.get("execution") or {}
     current_output = output if output is not None else execution.get("raw_output", "")
     plan_graph = session.get("plan_graph")
+    task_spec_shell = session.get("task_spec_shell") or build_task_spec_shell(
+        session_id=session_id,
+        raw_request=session.get("text", ""),
+        task_type=spec.get("task_type") or session["task_type"],
+        state=session.get("state", "validating"),
+        spec=spec,
+        inferred_answers=session.get("clarify_answers") or session.get("inferred_answers") or {},
+    )
 
     report = handler.validate(spec, current_output)
+    lightweight_output_validation = validate_output_lightweight(task_spec_shell, spec, current_output)
     logic_validation = run_adversarial_residual_validation(
         spec,
         current_output,
         phase="post_execution",
         plan_graph=plan_graph,
     )
-    report = _merge_logic_validation(report, logic_validation)
+    report = _merge_validation_layers(report, lightweight_output_validation, logic_validation)
+    repair_result = {
+        "attempted": False,
+        "success": False,
+        "reason": "not_requested",
+        "repair_plan": build_repair_plan(report, lightweight_output_validation, logic_validation),
+    }
     final_output = current_output
+    run_memory = session.get("run_memory") or {}
+    hook_trace = session.get("hook_trace") or []
 
     if (
         auto_revise
         and not report.get("pass")
-        and execution
-        and execution.get("executor") not in {None, "prompt_only"}
-        and report.get("suggested_fix_prompt")
     ):
-        revised = run_executor(
-            execution.get("executor"),
-            report["suggested_fix_prompt"],
-            session.get("executor_config") or {},
-            {"session_id": session_id, "mode": "auto_revise"},
+        repair_plan = build_repair_plan(report, lightweight_output_validation, logic_validation)
+        repair_attempt = attempt_repair_once(
+            execution=execution,
+            repair_plan=repair_plan,
+            executor_config=session.get("executor_config") or {},
+            session_id=session_id,
         )
-        if not revised.get("error") and revised.get("raw_output"):
-            final_output = revised["raw_output"]
-            execution = revised
+        repair_result = {
+            "attempted": repair_attempt.get("attempted", False),
+            "success": repair_attempt.get("success", False),
+            "reason": repair_attempt.get("reason", ""),
+            "repair_plan": repair_plan,
+        }
+        if repair_attempt.get("success"):
+            final_output = repair_attempt.get("revised_output", "")
+            execution = repair_attempt.get("revised_execution", execution)
             report = handler.validate(spec, final_output)
+            lightweight_output_validation = validate_output_lightweight(task_spec_shell, spec, final_output)
             logic_validation = run_adversarial_residual_validation(
                 spec,
                 final_output,
                 phase="post_execution",
                 plan_graph=plan_graph,
             )
-            report = _merge_logic_validation(report, logic_validation)
+            report = _merge_validation_layers(report, lightweight_output_validation, logic_validation)
+            repair_result["repair_plan"] = build_repair_plan(report, lightweight_output_validation, logic_validation)
+
+    hook_ctx = HOOKS.emit(
+        "before_final_output",
+        {
+            "session_id": session_id,
+            "task_type": session["task_type"],
+            "task_spec_shell": task_spec_shell,
+            "project_memory": session.get("project_memory") or {},
+            "run_memory": run_memory,
+            "hook_trace": hook_trace,
+        },
+    )
+    run_memory = merge_run_memory(run_memory, hook_ctx.get("run_memory"))
+    hook_trace = list(hook_ctx.get("hook_trace") or [])
+
+    if not report.get("pass"):
+        hook_ctx = HOOKS.emit(
+            "on_validation_failed",
+            {
+                "session_id": session_id,
+                "task_type": session["task_type"],
+                "validation_issues": report.get("issues") or [],
+                "task_spec_shell": task_spec_shell,
+                "project_memory": session.get("project_memory") or {},
+                "run_memory": run_memory,
+                "hook_trace": hook_trace,
+            },
+        )
+        run_memory = merge_run_memory(run_memory, hook_ctx.get("run_memory"))
+        run_memory = append_run_note(run_memory, "Validation failed and failure hooks were triggered.")
+        hook_trace = list(hook_ctx.get("hook_trace") or [])
+    else:
+        run_memory = append_run_note(run_memory, "Validation passed.")
 
     session = store.update(
         session_id,
         state="done",
         execution=execution,
+        lightweight_output_validation=lightweight_output_validation,
+        repair_result=repair_result,
         validation=report,
         logic_validation=logic_validation,
+        run_memory=run_memory,
+        hook_trace=hook_trace,
         final_output=handler.postprocess(final_output),
     )
-
-    return {
-        "session_id": session_id,
-        "state": session["state"],
-        "validation": session["validation"],
-        "final_output": session["final_output"],
-    }
+    payload = validate_response(session)
+    assert_response_shape("validate", payload)
+    return payload
 
 
-def _merge_logic_validation(report: dict, logic_validation: dict) -> dict:
+def _merge_validation_layers(report: dict, lightweight_output_validation: dict, logic_validation: dict) -> dict:
     merged = dict(report or {})
     issues = list(merged.get("issues") or [])
+    for issue in lightweight_output_validation.get("issues") or []:
+        issues.append(
+            {
+                "type": issue.get("type"),
+                "message": issue.get("message"),
+                "source": "lightweight_validation",
+            }
+        )
     for issue in (logic_validation.get("precondition_issues") or []) + (logic_validation.get("attack_findings") or []):
         issues.append(
             {
@@ -305,15 +528,27 @@ def _merge_logic_validation(report: dict, logic_validation: dict) -> dict:
         )
 
     merged["issues"] = issues
+    merged["lightweight_validation"] = lightweight_output_validation
     merged["logic_validation"] = logic_validation
-    merged["pass"] = bool(merged.get("pass")) and bool(logic_validation.get("pass"))
+    merged["pass"] = bool(merged.get("pass")) and bool(logic_validation.get("pass")) and bool(
+        lightweight_output_validation.get("passed")
+    )
 
     repair_prompt = logic_validation.get("repair_prompt", "")
     base_fix_prompt = merged.get("suggested_fix_prompt", "")
+    lightweight_repairs = lightweight_output_validation.get("suggested_repairs") or []
+    if lightweight_repairs:
+        repair_block = "Lightweight validation fixes:\n" + "\n".join(f"- {row}" for row in lightweight_repairs)
+        if base_fix_prompt:
+            base_fix_prompt = f"{base_fix_prompt}\n\n{repair_block}"
+        else:
+            base_fix_prompt = repair_block
     if repair_prompt and base_fix_prompt:
         merged["suggested_fix_prompt"] = f"{base_fix_prompt}\n\n{repair_prompt}"
     elif repair_prompt:
         merged["suggested_fix_prompt"] = repair_prompt
+    elif base_fix_prompt:
+        merged["suggested_fix_prompt"] = base_fix_prompt
     return merged
 
 

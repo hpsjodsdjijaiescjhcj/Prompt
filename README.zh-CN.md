@@ -173,6 +173,17 @@ TaskForge 现阶段围绕一个非常明确的工作流展开：
 
 `Clarify -> Align -> Execute -> Validate`
 
+当前实现也在把这条流程逐步补成更稳定的产品骨架：
+
+- **Unified Task Spec shell**：给不同任务类型套上一层统一任务规格壳
+- **Spec Gap Detector**：判断任务是否还缺关键信息，能不能继续往下走
+- **Risk Policy**：判断当前任务是可直接推进、需要澄清，还是需要确认
+- **Lightweight Validator**：先做低成本的执行前/执行后检查，再进入更重的验证层
+- 轻量 **HookManager**：在生命周期节点注入逻辑（`before_clarify`、`after_spec_generated`、`before_execution`、`after_execution`、`before_final_output`、`on_validation_failed`）
+- 双层记忆（`ProjectMemory` + `RunMemory`）：把长期偏好与单次任务过程状态分开管理
+- 内置 **Skill Registry**（`cold_email`、`resume_bullet`、`sop_paragraph`、`task_breakdown`）：把高频任务模式结构化复用
+- 单轮 **Repair Loop**：验证失败时，在可执行器可用前提下尝试一次修复
+
 ### Clarify
 
 系统先判断用户的话是否足够明确。  
@@ -224,6 +235,23 @@ TaskForge 现阶段围绕一个非常明确的工作流展开：
   - 在生成之后指出应该优先修复的残差区域
 
 这只是“对抗式残差逻辑验证”的第一步产品化原型。它**还不是**完整的符号规划、PDDL 编译、多智能体辩论或自动局部修复系统。
+
+从实际执行顺序看，验证层现在已经分成多层：
+
+- 轻量验证器：检查 spec 完整度、基础约束和目标覆盖
+- 面向 `email` 和 `generic` 的执行前 plan graph 验证
+- 执行后输出验证与对抗式残差逻辑检查
+
+当前编排运行时已经包含 hooks 与 memory：
+
+- `ProjectMemory`：长期偏好（例如输出风格、澄清策略）
+- `RunMemory`：会话级事件、spec 快照、验证失败轨迹
+- `Hook trace`：在 workflow 响应中返回事件级执行轨迹，提升可解释性
+
+第三阶段能力也已进入响应层：
+
+- `skill_selection` 与 `skill_suggestions`：给出当前任务可复用技能建议
+- `repair_result`：明确本轮是否尝试修复、修复是否成功、若未执行则给出原因（如 `not_requested`、`executor_not_runnable`）
 
 ---
 

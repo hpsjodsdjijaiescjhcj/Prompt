@@ -27,6 +27,12 @@ export default function WorkflowResult({ data, onExecute, onValidate, loading })
   const preflightValidation = data?.preflight_validation;
   const planGraph = preflightValidation?.plan_graph || data?.plan_graph;
   const logicValidation = validation?.logic_validation;
+  const taskSpecShell = data?.task_spec_shell;
+  const skillSelection = data?.skill_selection;
+  const skillSuggestions = data?.skill_suggestions || [];
+  const lightweightSpecValidation = data?.lightweight_spec_validation;
+  const lightweightOutputValidation = data?.lightweight_output_validation || validation?.lightweight_validation;
+  const repairResult = data?.repair_result;
   const canExecute = executor !== 'prompt_only' && (preflightValidation?.pass ?? true);
 
   return (
@@ -45,6 +51,59 @@ export default function WorkflowResult({ data, onExecute, onValidate, loading })
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {taskSpecShell && (
+        <div className="wf-field">
+          <label>Unified Task Spec</label>
+          <div className="wf-model-list">
+            <div className="wf-model-item">
+              <div><strong>Goal</strong></div>
+              <div className="wf-muted">{taskSpecShell.normalized_goal || 'N/A'}</div>
+            </div>
+            <div className="wf-model-item">
+              <div><strong>Status</strong></div>
+              <div className="wf-muted">{taskSpecShell.status || 'N/A'}</div>
+            </div>
+            <div className="wf-model-item">
+              <div><strong>Expected Artifacts</strong></div>
+              <div className="wf-muted">{(taskSpecShell.expected_artifacts || []).join(', ') || 'N/A'}</div>
+            </div>
+            <div className="wf-model-item">
+              <div><strong>Missing Fields</strong></div>
+              <div className="wf-muted">{(taskSpecShell.missing_fields || []).join(', ') || 'None'}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(skillSelection || skillSuggestions.length > 0) && (
+        <div className="wf-field">
+          <label>Skill Registry</label>
+          <div className="wf-model-list">
+            {skillSelection && (
+              <div className="wf-model-item">
+                <div><strong>Selected Skill</strong> <span className="wf-muted">{skillSelection.name}</span></div>
+                <div className="wf-muted">{skillSelection.description}</div>
+              </div>
+            )}
+            {skillSuggestions.map((skill) => (
+              <div className="wf-model-item" key={`skill-${skill.name}`}>
+                <div><strong>{skill.name}</strong> <span className="wf-muted">score: {skill.score}</span></div>
+                <div className="wf-muted">{skill.description}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {lightweightSpecValidation && (
+        <div className={`wf-validation ${lightweightSpecValidation.passed ? 'pass' : 'fail'}`}>
+          <strong>Lightweight Spec Validation: {lightweightSpecValidation.passed ? 'PASS' : 'FAIL'}</strong>
+          {(lightweightSpecValidation.issues || []).map((issue, idx) => (
+            <div key={`spec-light-${idx}`}>- {issue.type}: {issue.message}</div>
+          ))}
         </div>
       )}
 
@@ -233,6 +292,23 @@ export default function WorkflowResult({ data, onExecute, onValidate, loading })
           {(validation.issues || []).map((issue, idx) => (
             <div key={idx}>- {issue.type}: {issue.message}</div>
           ))}
+        </div>
+      )}
+
+      {lightweightOutputValidation && (
+        <div className={`wf-validation ${lightweightOutputValidation.passed ? 'pass' : 'fail'}`}>
+          <strong>Lightweight Output Validation: {lightweightOutputValidation.passed ? 'PASS' : 'FAIL'}</strong>
+          {(lightweightOutputValidation.issues || []).map((issue, idx) => (
+            <div key={`out-light-${idx}`}>- {issue.type}: {issue.message}</div>
+          ))}
+        </div>
+      )}
+
+      {repairResult && (
+        <div className={`wf-validation ${repairResult.success ? 'pass' : 'fail'}`}>
+          <strong>Repair Loop: {repairResult.success ? 'SUCCESS' : 'NO_CHANGE'}</strong>
+          <div>- attempted: {String(Boolean(repairResult.attempted))}</div>
+          <div>- reason: {repairResult.reason || '-'}</div>
         </div>
       )}
 

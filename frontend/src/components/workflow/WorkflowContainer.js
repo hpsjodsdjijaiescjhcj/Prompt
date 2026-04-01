@@ -74,8 +74,43 @@ export default function WorkflowContainer({ initialData, inputText }) {
         <span className="meta-tag">Workflow</span>
         <span className="meta-tag">task: {workflow?.task_type}</span>
         <span className="meta-tag">state: {workflow?.state}</span>
+        {workflow?.skill_selection?.name && (
+          <span className="meta-tag">skill: {workflow.skill_selection.name}</span>
+        )}
+        {workflow?.risk_assessment?.risk_level && (
+          <span className={`meta-tag wf-risk-tag wf-risk-tag-${workflow.risk_assessment.risk_level}`}>
+            risk: {workflow.risk_assessment.risk_level}
+          </span>
+        )}
+        {workflow?.risk_assessment?.decision && (
+          <span className="meta-tag">decision: {workflow.risk_assessment.decision}</span>
+        )}
       </div>
       <div className="wf-user-input">{inputText}</div>
+
+      {workflow?.task_spec_shell && (
+        <div className="wf-card wf-shell-card">
+          <h3>Unified Task Spec</h3>
+          <div className="wf-shell-grid">
+            <div>
+              <label>Goal</label>
+              <div className="wf-muted">{workflow.task_spec_shell.normalized_goal || 'N/A'}</div>
+            </div>
+            <div>
+              <label>Expected Artifacts</label>
+              <div className="wf-muted">{(workflow.task_spec_shell.expected_artifacts || []).join(', ') || 'N/A'}</div>
+            </div>
+            <div>
+              <label>Missing Fields</label>
+              <div className="wf-muted">{(workflow.task_spec_shell.missing_fields || []).join(', ') || 'None'}</div>
+            </div>
+            <div>
+              <label>Validation Checks</label>
+              <div className="wf-muted">{(workflow.task_spec_shell.validation_checks || []).join(', ') || 'N/A'}</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && <div className="wf-error">{error}</div>}
 
