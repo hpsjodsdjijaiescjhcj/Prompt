@@ -1,6 +1,6 @@
 """
-任务分类器 v2
-优先使用 Gemini LLM 进行智能分类，不可用时降级到关键词匹配
+任务分类器 v3 — 统一任务类型体系
+优先使用 LLM 语义分类，不可用时降级到关键词匹配
 """
 
 import logging
@@ -11,104 +11,106 @@ from config import TASK_TYPES
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# 关键词匹配 Fallback
+# 关键词匹配 Fallback（每类独立，无跨类混淆）
 # ============================================================
 
 KEYWORDS = {
-    "writing": [
-        "写", "文案", "文章", "故事", "小说", "诗", "剧本", "广告",
-        "营销", "推广", "宣传", "标题", "slogan", "文风", "润色",
-        "改写", "翻译", "小红书", "公众号", "微博", "朋友圈",
-        "邮件", "信", "报告", "总结", "摘要", "大纲", "创作",
-        "write", "article", "blog", "copy", "content", "essay",
-        "文笔", "段落", "开头", "结尾", "描述", "介绍",
+    "email": [
+        "邮件", "邮箱", "email", "e-mail", "mail",
+        "写信", "发信", "回复", "催款", "催办", "跟进",
+        "通知", "告知", "提醒", "邀请函", "确认函",
+        "谢谢邮件", "拒绝邮件", "道歉邮件", "投诉邮件",
+        "商务信函", "商务邮件", "内部邮件",
+        "follow up", "reply", "draft email", "write email",
     ],
-    "coding": [
+    "code": [
         "代码", "编程", "程序", "函数", "bug", "调试", "开发",
-        "python", "java", "javascript", "react", "vue", "api",
+        "python", "java", "javascript", "typescript", "react", "vue", "golang",
         "数据库", "sql", "html", "css", "算法", "数据结构",
-        "部署", "docker", "git", "前端", "后端", "全栈",
+        "部署", "docker", "git", "kubernetes", "前端", "后端", "全栈",
         "code", "debug", "deploy", "script", "自动化", "爬虫",
-        "接口", "框架", "library", "sdk", "app", "网站", "web",
+        "接口", "api", "框架", "library", "sdk", "微服务",
+        "重构", "refactor", "review", "代码审查", "单元测试", "测试",
     ],
-    "academic": [
-        "论文", "研究", "文献", "引用", "学术", "期刊",
-        "综述", "实验", "假设", "方法论", "摘要", "abstract",
-        "研究方向", "课题", "答辩", "毕业", "学位",
-        "paper", "research", "thesis", "dissertation",
-        "理论", "模型", "框架", "分析方法", "统计",
+    "content": [
+        "文案", "文章", "故事", "小说", "诗", "剧本", "广告",
+        "营销", "推广", "宣传", "标题", "slogan", "创作",
+        "小红书", "公众号", "微博", "朋友圈", "抖音", "短视频",
+        "write", "article", "blog", "copy", "content", "essay",
+        "文笔", "段落", "描述", "产品介绍", "品牌故事",
+        "SEO", "软文", "种草", "带货", "转化率",
+        "翻译", "改写", "润色", "创意", "文风",
     ],
-    "business": [
-        "商业", "市场", "竞品", "战略", "策略",
-        "商业模式", "盈利", "收入", "成本", "用户", "客户",
-        "增长", "融资", "投资", "估值", "财务", "报表",
-        "swot", "pest", "商业计划", "bp", "pitch",
-        "品牌", "定位", "营收", "利润", "roi",
-        "business", "market", "strategy", "competitive",
-        "行业", "赛道", "趋势", "风口",
-    ],
-    "search": [
-        "搜索", "查找", "查询", "最新", "新闻", "热点",
+    "research": [
+        "调研", "调查", "研究", "竞品", "对比", "比较", "区别",
+        "市场", "行业", "趋势", "报告", "综述", "review",
         "是什么", "是谁", "在哪", "怎么样", "多少",
-        "排名", "排行", "对比", "比较", "区别",
-        "百科", "定义", "概念", "解释",
+        "推荐", "哪个好", "评测", "评价", "排名", "排行",
         "search", "find", "latest", "news", "what is",
-        "推荐", "哪个好", "评测", "评价",
+        "百科", "定义", "概念", "解释", "来源",
+        "信息收集", "数据收集", "事实核查",
     ],
-    "reasoning": [
-        "推理", "逻辑", "数学", "计算", "证明", "公式",
-        "方程", "概率", "统计", "优化",
-        "为什么", "原因", "因果", "假设", "推断",
-        "math", "logic", "reason", "calculate", "solve",
-        "谜题", "puzzle", "智力", "脑筋急转弯",
-        "评估", "判断", "决策",
+    "analysis": [
+        "分析", "解读", "诊断", "洞察", "评估", "判断",
+        "数据", "指标", "指数", "率", "占比", "趋势图",
+        "原因", "为什么", "因果", "影响", "关联",
+        "SWOT", "PEST", "波特五力", "财务分析", "运营分析",
+        "用户分析", "留存", "转化", "漏斗", "归因",
+        "A/B测试", "增长分析", "商业智能", "BI", "dashboard",
+    ],
+    "document": [
+        "总结", "摘要", "提取", "整理", "归纳", "梳理",
+        "文档", "合同", "协议", "报告", "纪要", "会议",
+        "压缩", "精简", "要点", "关键信息",
+        "summarize", "extract", "summarization",
+        "这篇文章", "这份报告", "这个文件", "以下内容",
+        "读", "理解", "分析这段", "归纳以下",
+    ],
+    "planning": [
+        "计划", "规划", "方案", "策略", "路线图", "roadmap",
+        "OKR", "KPI", "目标", "里程碑", "排期",
+        "项目", "任务分解", "WBS", "甘特图",
+        "决策", "选择", "建议", "方向", "优先级",
+        "流程", "SOP", "操作手册", "规范",
+        "战略", "布局", "年度计划", "季度计划",
     ],
 }
 
-# LLM 分类 System Prompt
-CLASSIFIER_SYSTEM_PROMPT = """你是一个任务分类专家。用户会给你一段需求描述，你需要分析这个需求并返回 JSON 格式的分类结果。
+CLASSIFIER_SYSTEM_PROMPT = """你是任务分类专家。分析用户需求，返回最准确的任务类型分类。
 
-可选的任务类型有：
-- writing: 写作（文案、文章、故事、营销内容等创作类任务）
-- coding: 编程（代码编写、调试、架构设计等技术任务）
-- academic: 学术（论文、研究、文献综述等学术类任务）
-- business: 商业（商业分析、市场调研、商业计划等商业类任务）
-- search: 搜索（信息检索、事实查询、新闻资讯等搜索类任务）
-- reasoning: 推理（逻辑推理、数学计算、问题分析等推理类任务）
+可用类型（必须精确使用以下标识）：
+- email:    商务邮件、通知、回复、催办、邀请函等沟通类任务
+- code:     代码编写、调试、重构、架构设计、代码审查等工程类任务
+- content:  文章、文案、营销内容、创意写作、脚本等创作类任务
+- research: 市场调研、竞品分析、信息检索、行业研究等调研类任务
+- analysis: 数据解读、业务指标分析、财务分析、运营诊断等分析类任务
+- document: 文档总结、内容提取、格式整理、会议纪要等文档加工任务
+- planning: 项目规划、战略制定、方案设计、决策分析等规划类任务
+- generic:  无法明确归类的综合性任务
 
-你必须严格按照以下 JSON 格式返回，不要输出任何额外文本：
+分类规则：
+1. email 仅限于有明确"写邮件/发邮件/回复邮件"意图的任务
+2. code 仅限于有明确编程、调试、部署意图的任务
+3. content 是写作创作，不是分析或文档处理
+4. research 侧重信息收集和调查，analysis 侧重数据/业务分析
+5. document 是对已有内容的加工处理，不是原创写作
+6. planning 是制定计划/方案/决策，不是执行层面的写作
+7. 置信度 < 0.5 时选 generic
+
+只返回 JSON，不含任何其他文字：
 {
   "task_types": [
-    {"type": "类型标识", "confidence": 0.0到1.0的置信度}
+    {"type": "标识", "confidence": 0.0到1.0}
   ],
-  "complexity": "low/medium/high",
-  "intent": "一句话描述用户的核心意图",
-  "key_entities": ["需求中的关键实体"],
-  "language": "zh或en"
-}
-
-规则：
-1. task_types 可以有多个，按置信度从高到低排列
-2. complexity 根据任务难度判断：简单查询=low，一般任务=medium，需要深度分析=high
-3. intent 用简短一句话概括用户真正想要什么
-4. key_entities 提取需求中的关键名词/实体
-5. 只返回 JSON，不要有任何其他文字"""
+  "complexity": "low|medium|high",
+  "intent": "一句话描述核心意图",
+  "key_entities": ["关键实体"],
+  "language": "zh|en"
+}"""
 
 
 def classify_task(user_input: str) -> dict:
-    """
-    对用户输入进行智能分类。
-
-    Returns:
-        分类结果 dict，包含：
-        - task_types: 按置信度排序的类型列表
-        - complexity: 任务复杂度 (low/medium/high)
-        - intent: 用户核心意图
-        - key_entities: 关键实体
-        - language: 语言
-        - source: "llm" 或 "fallback"
-    """
-    # 优先使用 LLM 分类
+    """对用户输入进行智能分类。"""
     if llm_client.is_available():
         try:
             result = _classify_with_llm(user_input)
@@ -116,25 +118,21 @@ def classify_task(user_input: str) -> dict:
             return result
         except Exception as e:
             logger.warning("LLM 分类失败，降级到关键词匹配: %s", e)
-
-    # Fallback: 关键词匹配
     return _classify_with_keywords(user_input)
 
 
 def _classify_with_llm(user_input: str) -> dict:
-    """使用 Gemini LLM 进行分类"""
     result = llm_client.chat_json(
-        prompt=f"请分析以下用户需求：\n\n{user_input}",
+        prompt=f"分析以下用户需求：\n\n{user_input}",
         system_prompt=CLASSIFIER_SYSTEM_PROMPT,
     )
 
-    # 验证和修正结果
     valid_types = set(TASK_TYPES.keys())
 
     if "task_types" not in result or not result["task_types"]:
         raise ValueError("LLM 未返回 task_types")
 
-    # 过滤无效类型
+    # Filter invalid types, keep only known ones
     result["task_types"] = [
         t for t in result["task_types"]
         if t.get("type") in valid_types
@@ -143,24 +141,19 @@ def _classify_with_llm(user_input: str) -> dict:
     if not result["task_types"]:
         raise ValueError("LLM 返回的类型全部无效")
 
-    # 确保 confidence 在 0-1 之间
     for t in result["task_types"]:
         t["confidence"] = max(0.0, min(1.0, float(t.get("confidence", 0.5))))
 
-    # 确保 complexity 有效
     if result.get("complexity") not in ("low", "medium", "high"):
         result["complexity"] = "medium"
 
-    # 确保其他字段存在
     result.setdefault("intent", user_input)
     result.setdefault("key_entities", [])
     result.setdefault("language", "zh")
-
     return result
 
 
 def _classify_with_keywords(user_input: str) -> dict:
-    """关键词匹配 fallback"""
     text = user_input.lower()
     results = []
 
@@ -169,36 +162,34 @@ def _classify_with_keywords(user_input: str) -> dict:
         matched = []
         for kw in keywords:
             if kw.lower() in text:
-                weight = len(kw)
-                score += weight
+                # Longer keywords = stronger signal
+                score += max(len(kw), 2)
                 matched.append(kw)
 
         if score > 0:
+            # Normalize: cap at 40 chars of matched keyword length
+            confidence = min(score / 40.0, 1.0)
             results.append({
                 "type": task_type,
-                "confidence": min(score / 20.0, 1.0),  # 归一化到 0-1
+                "confidence": confidence,
                 "matched_keywords": matched,
             })
 
     results.sort(key=lambda x: x["confidence"], reverse=True)
 
     if not results:
-        results = [{"type": "writing", "confidence": 0.3, "matched_keywords": []}]
+        results = [{"type": "generic", "confidence": 0.3}]
 
-    # 估算复杂度
     text_len = len(user_input)
-    if text_len > 100 or len(results) > 2:
-        complexity = "high"
-    elif text_len > 30:
-        complexity = "medium"
-    else:
-        complexity = "low"
+    complexity = "high" if text_len > 80 or len(results) > 3 else "medium" if text_len > 25 else "low"
+
+    is_chinese = any('一' <= c <= '鿿' for c in user_input)
 
     return {
         "task_types": results,
         "complexity": complexity,
-        "intent": user_input,
+        "intent": user_input[:120],
         "key_entities": [],
-        "language": "zh" if any('\u4e00' <= c <= '\u9fff' for c in user_input) else "en",
+        "language": "zh" if is_chinese else "en",
         "source": "fallback",
     }

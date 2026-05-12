@@ -1,13 +1,24 @@
 import React, { useMemo, useState } from 'react';
 
-function buildInitialValues(schema) {
+/* ── Helpers ──────────────────────────────────────────────── */
+function getFieldType(field) {
+  return field?.type || field?.field_type || 'short_text';
+}
+
+function buildInitial(schema, inferredAnswers = {}) {
   const values = {};
   (schema?.fields || []).forEach((f) => {
-    if (f.default !== undefined) {
+    const fieldType = getFieldType(f);
+    // Pre-fill with inferred value if available
+    if (inferredAnswers[f.key] !== undefined) {
+      values[f.key] = inferredAnswers[f.key];
+    } else if (f.default !== undefined) {
       values[f.key] = f.default;
-    } else if (f.type === 'multi_choice') {
+    } else if (f.default_value !== undefined) {
+      values[f.key] = f.default_value;
+    } else if (fieldType === 'multi_choice') {
       values[f.key] = [];
-    } else if (f.type === 'boolean') {
+    } else if (fieldType === 'boolean') {
       values[f.key] = false;
     } else {
       values[f.key] = '';
@@ -17,10 +28,11 @@ function buildInitialValues(schema) {
 }
 
 function isFilled(field, val) {
+  const fieldType = getFieldType(field);
   if (!field.required) return true;
-  if (field.type === 'multi_choice') return Array.isArray(val) && val.length > 0;
-  if (field.type === 'boolean') return typeof val === 'boolean';
-  if (field.type === 'number') return val !== '' && val !== null && !Number.isNaN(Number(val));
+  if (fieldType === 'multi_choice') return Array.isArray(val) && val.length > 0;
+  if (fieldType === 'boolean') return typeof val === 'boolean';
+  if (fieldType === 'number') return val !== '' && val !== null && !Number.isNaN(Number(val));
   return String(val || '').trim().length > 0;
 }
 
@@ -29,9 +41,14 @@ function conditionMatch(condition, values) {
   return Object.entries(condition).every(([k, expected]) => values[k] === expected);
 }
 
-function isActive(field, values) {
-  if (!field.show_when) return true;
-  return conditionMatch(field.show_when, values);
+function isVisible(field, values) {
+  if (field.show_when) {
+    return conditionMatch(field.show_when, values);
+  }
+  if (field.depends_on) {
+    return values[field.depends_on] === field.depends_on_value;
+  }
+  return true;
 }
 
 function isRequired(field, values) {
@@ -40,8 +57,141 @@ function isRequired(field, values) {
   return false;
 }
 
-export default function ClarifyForm({ schema, missingSlots = [], missingSlotHints = {}, onSubmit, loading }) {
-  const [values, setValues] = useState(() => buildInitialValues(schema));
+/* ── Field Renderer ───────────────────────────────────────── */
+function FieldRenderer({ field, value, onChange, onMultiToggle }) {
+  switch (getFieldType(field)) {
+    case 'single_choice':
+      return (
+        <div className="chip-group">
+          {(field.options || []).map((opt) => (
+            <button
+              type="button"
+              key={opt.value}
+              className={`chip-btn ${value === opt.value ? 'active' : ''}`}
+              onClick={() => onChange(field.key, opt.value)}
+            >
+              {opt.icon && <span>{opt.icon} </span>}
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      );
+
+    case 'multi_choice':
+      return (
+        <div className="chip-group">
+          {(field.options || []).map((opt) => {
+            const active = (value || []).includes(opt.value);
+            return (
+              <button
+                type="button"
+                key={opt.value}
+                className={`chip-btn ${active ? 'active' : ''}`}
+                onClick={() => onMultiToggle(field.key, opt.value)}
+              >
+                {opt.icon && <span>{opt.icon} </span>}
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      );
+
+    case 'short_text':
+      return (
+        <input
+          className="form-input"
+          type="text"
+          placeholder={field.placeholder || ''}
+          value={value || ''}
+          onChange={(e) => onChange(field.key, e.target.value)}
+        />
+      );
+
+    case 'multiline_text':
+      return (
+        <textarea
+          className="form-textarea"
+          rows={4}
+          placeholder={field.placeholder || ''}
+          value={value || ''}
+          onChange={(e) => onChange(field.key, e.target.value)}
+        />
+      );
+
+    case 'number':
+      return (
+        <input
+          className="form-input"
+          type="number"
+          min={field.min}
+          max={field.max}
+          style={{ maxWidth: 160 }}
+          value={value}
+          onChange={(e) => onChange(field.key, e.target.value)}
+        />
+      );
+
+    case 'boolean':
+      return (
+        <label className="toggle-row">
+          <div
+            className={`toggle-switch ${value ? 'on' : ''}`}
+            onClick={() => onChange(field.key, !value)}
+          />
+          <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            {value ? (field.true_label || '是') : (field.false_label || '否')}
+          </span>
+        </label>
+      );
+
+    default:
+      return null;
+  }
+}
+
+/* ── ClarifyForm ──────────────────────────────────────────── */
+export default function ClarifyForm({
+  schema,
+  missingSlots = [],
+  missingSlotHints = {},
+  inferredAnswers = {},
+  onSubmit,
+  loading,
+}) {
+  const [values, setValues] = useState(() => buildInitial(schema, inferredAnswers));
+
+  const update = (key, val) => setValues((prev) => ({ ...prev, [key]: val }));
+  const toggleMulti = (key, val) => {
+    setValues((prev) => {
+      const curr = Array.isArray(prev[key]) ? prev[key] : [];
+      const next = curr.includes(val)
+        ? curr.filter((x) => x !== val)
+        : [...curr, val];
+      return { ...prev, [key]: next };
+    });
+  };
+
+  const visibleFields = useMemo(
+    () => (schema?.fields || []).filter((f) => isVisible(f, values)),
+    [schema, values]
+  );
+
+  const canSubmit = useMemo(() => {
+    return visibleFields.every((f) => {
+      const req = isRequired(f, values);
+      if (!req) return true;
+      return isFilled({ ...f, required: true }, values[f.key]);
+    });
+  }, [visibleFields, values]);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!canSubmit || loading) return;
+    onSubmit(values);
+  };
+
+  /* missing slots banner */
   const slotLabelMap = useMemo(() => {
     const map = {};
     (schema?.fields || []).forEach((f) => {
@@ -50,168 +200,93 @@ export default function ClarifyForm({ schema, missingSlots = [], missingSlotHint
     return map;
   }, [schema]);
 
-  const missingLabels = useMemo(() => {
-    const fallback = {
-      clarified_request: '最终交付目标',
-      primary_target: '主要作用对象',
-      background: '背景信息',
-      audience: '目标人群',
-      location: '地点',
-      time_range: '时间范围',
-    };
-    return missingSlots.map((k) => slotLabelMap[k] || fallback[k] || k);
-  }, [missingSlots, slotLabelMap]);
+  const missingLabels = missingSlots
+    .map((k) => slotLabelMap[k] || k)
+    .filter(Boolean);
 
-  const missingDetailRows = useMemo(() => {
-    return missingSlots.map((slotKey, idx) => ({
-      key: `${slotKey}-${idx}`,
-      label: slotLabelMap[slotKey] || slotKey,
-      hint: missingSlotHints?.[slotKey] || '',
-    }));
-  }, [missingSlotHints, missingSlots, slotLabelMap]);
-
-  const canSubmit = useMemo(() => {
-    return (schema?.fields || []).every((f) => {
-      if (!isActive(f, values)) return true;
-      const requiredNow = isRequired(f, values);
-      return isFilled({ ...f, required: requiredNow }, values[f.key]);
-    });
-  }, [schema, values]);
-
-  const update = (key, val) => {
-    setValues((prev) => ({ ...prev, [key]: val }));
-  };
-
-  const toggleMulti = (key, val) => {
-    setValues((prev) => {
-      const curr = Array.isArray(prev[key]) ? prev[key] : [];
-      const next = curr.includes(val) ? curr.filter((x) => x !== val) : [...curr, val];
-      return { ...prev, [key]: next };
-    });
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!canSubmit || loading) return;
-    onSubmit(values);
-  };
+  /* inferred fields (pre-filled) */
+  const inferredKeys = Object.keys(inferredAnswers).filter(
+    (k) => inferredAnswers[k] !== undefined && inferredAnswers[k] !== ''
+  );
 
   return (
-    <form className="wf-card" onSubmit={handleSubmit}>
-      <h3>{schema?.title || 'Clarify'}</h3>
-      <p className="wf-desc">{schema?.description}</p>
+    <form onSubmit={handleSubmit}>
+      {/* Missing slots banner */}
       {missingLabels.length > 0 && (
-        <div className="wf-missing">
-          <div className="wf-missing-title">还缺这些关键信息：</div>
-          <div className="wf-missing-list">
+        <div style={{ marginBottom: 16 }}>
+          <p className="text-sm" style={{ color: 'var(--warning)', fontWeight: 600, marginBottom: 8 }}>
+            ⚠ 以下信息是执行任务的必要条件，请确认填写：
+          </p>
+          <div className="missing-slots">
             {missingLabels.map((label) => (
-              <span key={label} className="wf-missing-chip">{label}</span>
+              <span key={label} className="missing-slot-tag">
+                <span>!</span> {label}
+              </span>
             ))}
           </div>
-          {missingDetailRows.length > 0 && (
-            <div className="wf-missing-details">
-              {missingDetailRows.map((row) => (
-                <div key={row.key} className="wf-missing-item">
-                  <strong>{row.label}：</strong>{row.hint || '这是推进下一步所需的关键参数。'}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
 
-      {(schema?.fields || []).map((f) => {
-        if (!isActive(f, values)) return null;
-        const requiredNow = isRequired(f, values);
-        return (
-        <div className="wf-field" key={f.key}>
-          <label>
-            {f.label}
-            {requiredNow ? ' *' : ''}
-          </label>
-          {f.help_text && <div className="wf-help">{f.help_text}</div>}
-
-          {f.type === 'single_choice' && (
-            <div className="wf-chip-row">
-              {(f.options || []).map((opt) => (
-                <button
-                  type="button"
-                  key={opt.value}
-                  className={`wf-chip ${values[f.key] === opt.value ? 'active' : ''}`}
-                  onClick={() => update(f.key, opt.value)}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {f.type === 'multi_choice' && (
-            <div className="wf-chip-row">
-              {(f.options || []).map((opt) => {
-                const active = (values[f.key] || []).includes(opt.value);
-                return (
-                  <button
-                    type="button"
-                    key={opt.value}
-                    className={`wf-chip ${active ? 'active' : ''}`}
-                    onClick={() => toggleMulti(f.key, opt.value)}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {f.type === 'short_text' && (
-            <input
-              className="wf-input"
-              type="text"
-              placeholder={f.placeholder || ''}
-              value={values[f.key] || ''}
-              onChange={(e) => update(f.key, e.target.value)}
-            />
-          )}
-
-          {f.type === 'multiline_text' && (
-            <textarea
-              className="wf-textarea"
-              rows={4}
-              placeholder={f.placeholder || ''}
-              value={values[f.key] || ''}
-              onChange={(e) => update(f.key, e.target.value)}
-            />
-          )}
-
-          {f.type === 'number' && (
-            <input
-              className="wf-input"
-              type="number"
-              min={f.min}
-              max={f.max}
-              value={values[f.key]}
-              onChange={(e) => update(f.key, e.target.value)}
-            />
-          )}
-
-          {f.type === 'boolean' && (
-            <label className="wf-toggle">
-              <input
-                type="checkbox"
-                checked={Boolean(values[f.key])}
-                onChange={(e) => update(f.key, e.target.checked)}
-              />
-              <span>{Boolean(values[f.key]) ? (f.true_label || 'Yes') : (f.false_label || 'No')}</span>
-            </label>
-          )}
+      {/* Inferred fields notice */}
+      {inferredKeys.length > 0 && (
+        <div style={{
+          marginBottom: 16,
+          padding: '8px 12px',
+          background: 'var(--success-bg)',
+          border: '1px solid var(--green-500)',
+          borderRadius: 'var(--r-md)',
+          fontSize: 12,
+          color: 'var(--success)',
+        }}>
+          ✓ 系统已从你的描述中推断出 {inferredKeys.length} 项信息，已为你预填写。请确认后可直接提交。
         </div>
-      )})}
+      )}
 
-      <div className="wf-actions">
-        <button type="submit" className="action-btn" disabled={!canSubmit || loading}>
-          {loading ? 'Processing...' : 'Continue'}
+      {/* Fields */}
+      {visibleFields.map((f) => {
+        const req = isRequired(f, values);
+        const isInferred = inferredAnswers[f.key] !== undefined;
+        return (
+          <div className="form-field" key={f.key}>
+            <div className="form-label">
+              {f.label}
+              {req && <span className="required"> *</span>}
+              {isInferred && (
+                <span style={{
+                  marginLeft: 6,
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: 'var(--success)',
+                  background: 'var(--success-bg)',
+                  padding: '1px 6px',
+                  borderRadius: 'var(--r-full)',
+                }}>
+                  已推断
+                </span>
+              )}
+            </div>
+            {f.help_text && <div className="form-help">{f.help_text}</div>}
+            <FieldRenderer
+              field={f}
+              value={values[f.key]}
+              onChange={update}
+              onMultiToggle={toggleMulti}
+            />
+          </div>
+        );
+      })}
+
+      <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
+        <button
+          type="submit"
+          className="btn btn-primary"
+          disabled={!canSubmit || loading}
+        >
+          {loading ? '提交中...' : '确认并继续 →'}
         </button>
+        <span className="text-xs text-muted" style={{ alignSelf: 'center' }}>
+          所有填写内容将完整保存并用于生成任务规格
+        </span>
       </div>
     </form>
   );

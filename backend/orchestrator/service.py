@@ -5,6 +5,7 @@ import re
 from recommender import recommend_models
 
 from .adversarial_validator import run_adversarial_residual_validation
+from .contract import build_execution_contract, inject_label_field_packs, render_contract_prefix
 from .executor import run_executor
 from .hooks import build_default_hook_manager
 from .inference import apply_inferred_defaults, infer_initial_answers
@@ -39,8 +40,20 @@ def start_workflow(
     preferred_executor: str | None = None,
     context: dict | None = None,
 ) -> dict:
-    task_type, handler, confidence = route_task(text)
+    hint_task_type = _resolve_user_task_hint((context or {}).get("user_selected_labels"))
+    if hint_task_type:
+        hinted_handler = get_handler(hint_task_type)
+        if hinted_handler:
+            task_type, handler, confidence = hint_task_type, hinted_handler, 0.99
+            route_source = "user_label"
+        else:
+            task_type, handler, confidence = route_task(text)
+            route_source = "auto"
+    else:
+        task_type, handler, confidence = route_task(text)
+        route_source = "auto"
     inferred = infer_initial_answers(task_type, text, context)
+    selected_labels = (context or {}).get("user_selected_labels") or []
     session = store.create(
         text=text,
         preferred_executor=preferred_executor,
@@ -76,6 +89,7 @@ def start_workflow(
         spec_gap = detect_spec_gaps(task_type, text, inferred_answers=inferred)
         risk_assessment = assess_risk(base_shell, spec_gap, preferred_executor)
         task_spec_shell = apply_shell_annotations(base_shell, spec_gap, risk_assessment)
+        model_contract = build_execution_contract(task_type=task_type, labels=selected_labels, schema=None)
         run_memory = append_run_note(run_memory, "Task type routed to 'other'; workflow kept in spec_ready without orchestration.")
         session = store.update(
             session["session_id"],
@@ -92,6 +106,9 @@ def start_workflow(
             run_memory=run_memory,
             hook_trace=hook_trace,
             routing_confidence=confidence,
+            route_source=route_source,
+            user_selected_labels=selected_labels,
+            model_contract=model_contract,
         )
         payload = start_response(session)
         assert_response_shape("start", payload)
@@ -112,6 +129,7 @@ def start_workflow(
         )
         risk_assessment = assess_risk(task_spec_shell, spec_gap, preferred_executor)
         task_spec_shell = apply_shell_annotations(task_spec_shell, spec_gap, risk_assessment)
+        model_contract = build_execution_contract(task_type=task_type, labels=selected_labels, schema=None)
         run_memory = append_run_note(run_memory, "Generic request considered specific enough; clarify step skipped.")
         session = store.update(
             session["session_id"],
@@ -129,12 +147,16 @@ def start_workflow(
             run_memory=run_memory,
             hook_trace=hook_trace,
             routing_confidence=confidence,
+            route_source=route_source,
+            user_selected_labels=selected_labels,
+            model_contract=model_contract,
         )
         payload = start_response(session)
         assert_response_shape("start", payload)
         return payload
 
     schema = handler.clarify_schema(text)
+    schema = inject_label_field_packs(schema, selected_labels)
     schema = _with_common_clarify_fields(schema, task_type)
     schema = apply_inferred_defaults(schema, inferred)
     schema, missing_slots = _build_minimal_clarify_schema(schema, task_type, inferred, text)
@@ -148,6 +170,7 @@ def start_workflow(
     )
     risk_assessment = assess_risk(base_shell, spec_gap, preferred_executor)
     task_spec_shell = apply_shell_annotations(base_shell, spec_gap, risk_assessment)
+    model_contract = build_execution_contract(task_type=task_type, labels=selected_labels, schema=schema)
     run_memory = append_run_note(run_memory, "Clarification required before moving to spec_ready.")
     session = store.update(
         session["session_id"],
@@ -165,6 +188,9 @@ def start_workflow(
         run_memory=run_memory,
         hook_trace=hook_trace,
         routing_confidence=confidence,
+        route_source=route_source,
+        user_selected_labels=selected_labels,
+        model_contract=model_contract,
     )
     payload = start_response(session)
     assert_response_shape("start", payload)
@@ -177,13 +203,24 @@ def submit_clarifications(session_id: str, answers: dict) -> dict:
         raise ValueError(f"Invalid state transition: {session['state']} -> spec_ready")
 
     inferred = session.get("inferred_answers") or {}
-    merged_answers = {**inferred, **(answers or {})}
+    # Clarify 可能是多轮增量补充（尤其 preflight fail 后返回 clarifying）。
+    # 这里必须保留上一轮已确认答案，再叠加新输入，避免已填字段被覆盖丢失。
+    previous_answers = session.get("clarify_answers") or {}
+    merged_answers = {**inferred, **previous_answers, **(answers or {})}
+    merged_answers = _normalize_answers_for_task(
+        session.get("task_type", ""),
+        merged_answers,
+        session.get("spec_draft") or session.get("spec") or {},
+    )
     normalized_answers = _validate_and_normalize_answers(
         session.get("clarify_form_schema"),
         merged_answers,
     )
     handler = _must_handler(session["task_type"])
     spec = handler.build_spec(session["text"], normalized_answers)
+    selected_labels = session.get("user_selected_labels") or []
+    _inject_clarify_payload_into_spec(spec, normalized_answers)
+    _inject_label_answers_into_spec(spec, normalized_answers, selected_labels)
     spec_gap = detect_spec_gaps(session["task_type"], session["text"], inferred_answers=normalized_answers, spec=spec)
     task_spec_shell = build_task_spec_shell(
         session_id=session_id,
@@ -198,17 +235,29 @@ def submit_clarifications(session_id: str, answers: dict) -> dict:
     skill_selection = select_primary_skill(session["task_type"], session["text"])
     skill_suggestions = recommend_skills(session["task_type"], session["text"], top_n=2)
     run_memory = append_run_note(session.get("run_memory"), "Clarification answers submitted and spec draft generated.")
+    model_contract = build_execution_contract(
+        task_type=session["task_type"],
+        labels=selected_labels,
+        schema=session.get("clarify_form_schema"),
+    )
 
     session = store.update(
         session_id,
         clarify_answers=normalized_answers,
         spec_draft=spec,
+        spec=spec,
         task_spec_shell=task_spec_shell,
         spec_gap=spec_gap,
         risk_assessment=risk_assessment,
         skill_selection=skill_selection,
         skill_suggestions=skill_suggestions,
         run_memory=run_memory,
+        model_contract=model_contract,
+        # Clarify 已更新规格，必须清空上一轮 preflight 缓存，避免旧失败结果误拦截。
+        preflight_validation=None,
+        plan_graph=None,
+        missing_slots=[],
+        missing_slot_hints={},
         state="spec_ready",
     )
     payload = clarify_response(session)
@@ -222,6 +271,8 @@ def confirm_spec(session_id: str, spec: dict) -> dict:
         raise ValueError(f"Invalid state transition: {session['state']} -> confirm_spec")
 
     handler = _must_handler(spec.get("task_type") or session["task_type"])
+    # 无论用户是否在 SpecEditor 中删除了上下文字段，统一把 Clarify 完整输入回填进 spec。
+    _inject_clarify_payload_into_spec(spec, session.get("clarify_answers") or {})
 
     recommended = ["prompt_only", "local_lmstudio", "openai_compatible"]
     selected = session.get("preferred_executor") or "prompt_only"
@@ -233,7 +284,21 @@ def confirm_spec(session_id: str, spec: dict) -> dict:
         "selected_executor": selected,
         "recommended_models": _recommend_models_for_spec(spec, session.get("text", "")),
     }
+    selected_labels = session.get("user_selected_labels") or []
+    model_contract = build_execution_contract(
+        task_type=spec.get("task_type") or session["task_type"],
+        labels=selected_labels,
+        schema=session.get("clarify_form_schema"),
+    )
     prompts = handler.prompts(spec, route)
+    contract_prefix = render_contract_prefix(model_contract)
+    prompts = [
+        {
+            **row,
+            "prompt": f"{contract_prefix}{row.get('prompt', '')}",
+        }
+        for row in prompts
+    ]
     spec_gap = detect_spec_gaps(session["task_type"], session.get("text", ""), spec=spec)
     task_spec_shell = build_task_spec_shell(
         session_id=session_id,
@@ -267,7 +332,19 @@ def confirm_spec(session_id: str, spec: dict) -> dict:
         preflight_validation = validate_plan_graph(spec, plan_graph)
     else:
         preflight_validation = run_adversarial_residual_validation(spec, "", phase="preflight")
-    new_state = "done" if selected == "prompt_only" else "executing"
+    if preflight_validation and not preflight_validation.get("pass"):
+        refine_schema, missing_slots, missing_slot_hints = _build_refine_schema_for_preflight(
+            session.get("clarify_form_schema"),
+            preflight_validation,
+        )
+        new_state = "clarifying"
+    else:
+        refine_schema, missing_slots, missing_slot_hints = (
+            session.get("clarify_form_schema"),
+            session.get("missing_slots") or [],
+            session.get("missing_slot_hints") or {},
+        )
+        new_state = "done" if selected == "prompt_only" else "executing"
 
     session = store.update(
         session_id,
@@ -283,6 +360,9 @@ def confirm_spec(session_id: str, spec: dict) -> dict:
         route=route,
         generated_prompts=prompts,
         plan_graph=plan_graph,
+        clarify_form_schema=refine_schema,
+        missing_slots=missing_slots,
+        missing_slot_hints=missing_slot_hints,
         state=new_state,
         lightweight_spec_validation=lightweight_spec_validation,
         preflight_validation=preflight_validation,
@@ -290,6 +370,7 @@ def confirm_spec(session_id: str, spec: dict) -> dict:
         validation=None,
         logic_validation=None,
         final_output=None,
+        model_contract=model_contract,
     )
     payload = confirm_response(session)
     assert_response_shape("confirm", payload)
@@ -1013,3 +1094,214 @@ def _recommend_models_for_spec(spec: dict, original_text: str) -> list[dict]:
         }
         for r in recs
     ]
+
+
+def _resolve_user_task_hint(labels) -> str | None:
+    if not isinstance(labels, list) or not labels:
+        return None
+    norm = [str(x).strip().lower() for x in labels if str(x).strip()]
+    mapping = {
+        "email": "email",
+        "writing": "writing",
+        "code": "code",
+        "analysis": "generic",
+        "research": "generic",
+    }
+    preferred_order = ["email", "code", "writing", "analysis", "research"]
+    for key in preferred_order:
+        if key in norm and mapping.get(key):
+            return mapping[key]
+    for label in norm:
+        if label in mapping:
+            return mapping[label]
+    return None
+
+
+def _build_refine_schema_for_preflight(existing_schema: dict | None, preflight_validation: dict):
+    schema = dict(existing_schema or {"title": "补充关键信息", "description": "", "fields": []})
+    fields = list(schema.get("fields") or [])
+    key_map = {f.get("key"): f for f in fields if f.get("key")}
+
+    required_keys = _derive_refine_keys_from_preflight(preflight_validation)
+    hints = _build_missing_slot_hints(required_keys, "generic")
+
+    for key in required_keys:
+        if key in key_map:
+            key_map[key]["required"] = True
+            continue
+        key_map[key] = _fallback_field_for_key(key)
+
+    ordered = []
+    for core in ("clarified_request",):
+        if core in key_map:
+            ordered.append(key_map[core])
+    for key in required_keys:
+        if key in key_map and key_map[key] not in ordered:
+            ordered.append(key_map[key])
+
+    schema["title"] = "需要补充关键信息后才能继续执行"
+    schema["description"] = "Preflight 发现当前规格不足，请先补齐以下关键字段。"
+    schema["fields"] = ordered or fields
+    return schema, required_keys, hints
+
+
+def _derive_refine_keys_from_preflight(preflight_validation: dict) -> list[str]:
+    keys = []
+    for issue in (preflight_validation.get("graph_findings") or []) + (preflight_validation.get("attack_findings") or []):
+        issue_type = str(issue.get("type") or "")
+        msg = str(issue.get("message") or "").lower()
+        if issue_type == "weak_message_frame":
+            keys.extend(["background", "must_include"])
+        if issue_type == "deadline_unplanned":
+            keys.append("deadline_text")
+        if issue_type == "bullet_unplanned":
+            keys.append("bullet_focus")
+        if issue_type == "verification_unplanned":
+            keys.append("verification_plan")
+        if issue_type == "weak_output_contract":
+            keys.append("expected_output_type")
+        if "location" in msg:
+            keys.append("location")
+        if "time range" in msg or "time_range" in msg:
+            keys.append("time_range")
+
+    for issue in preflight_validation.get("precondition_issues") or []:
+        issue_type = str(issue.get("type") or "")
+        if issue_type in {"missing_background", "missing_context", "missing_material"}:
+            keys.append("background")
+        if issue_type == "missing_weather_location":
+            keys.append("location")
+        if issue_type == "missing_weather_time":
+            keys.append("time_range")
+        if issue_type == "missing_recipient":
+            keys.append("recipient_type")
+
+    dedup = []
+    for k in keys:
+        if k and k not in dedup:
+            dedup.append(k)
+    return dedup or ["background", "clarified_request"]
+
+
+def _fallback_field_for_key(key: str) -> dict:
+    fallback = {
+        "background": {
+            "key": "background",
+            "label": "补充背景信息",
+            "type": "multiline_text",
+            "required": True,
+            "placeholder": "说明现状、约束、已有信息和你想推进的方向。",
+        },
+        "must_include": {
+            "key": "must_include",
+            "label": "必须包含的要点",
+            "type": "multiline_text",
+            "required": True,
+            "placeholder": "一行一条。",
+        },
+        "clarified_request": {
+            "key": "clarified_request",
+            "label": "最终交付目标",
+            "type": "multiline_text",
+            "required": True,
+            "placeholder": "用1-3句明确你最终要什么结果。",
+        },
+        "expected_output_type": {
+            "key": "expected_output_type",
+            "label": "输出形式",
+            "type": "single_choice",
+            "required": True,
+            "default": "structured",
+            "options": [
+                {"value": "structured", "label": "结构化结论"},
+                {"value": "step_by_step", "label": "分步骤方案"},
+                {"value": "comparison", "label": "对比输出"},
+                {"value": "checklist", "label": "执行清单"},
+            ],
+        },
+    }
+    return fallback.get(
+        key,
+        {
+            "key": key,
+            "label": f"补充字段：{key}",
+            "type": "short_text",
+            "required": True,
+            "placeholder": f"请补充 {key}",
+        },
+    )
+
+
+def _inject_label_answers_into_spec(spec: dict, answers: dict, labels: list[str]) -> None:
+    if not isinstance(spec, dict):
+        return
+    label_context = {}
+    for key, value in (answers or {}).items():
+        if value in (None, "", [], {}):
+            continue
+        if key.startswith("analysis_") or key.startswith("source_") or key.startswith("voice_") or key in {
+            "citation_required",
+            "recipient_identity",
+            "desired_action",
+            "delivery_artifact",
+            "verification_plan",
+            "evidence_preference",
+            "structure_expectation",
+        }:
+            label_context[key] = value
+    if label_context:
+        context = spec.setdefault("context", {})
+        context["label_context"] = label_context
+    if labels:
+        spec["labels"] = [str(x).strip().lower() for x in labels if str(x).strip()]
+
+
+def _inject_clarify_payload_into_spec(spec: dict, answers: dict) -> None:
+    if not isinstance(spec, dict):
+        return
+    context = spec.setdefault("context", {})
+    clean = {}
+    for key, value in (answers or {}).items():
+        if value in (None, "", [], {}):
+            continue
+        clean[key] = value
+    context["clarify_payload"] = clean
+
+
+def _normalize_answers_for_task(task_type: str, answers: dict, current_spec: dict | None = None) -> dict:
+    """Normalize cross-schema answers into handler-native keys."""
+    normalized = dict(answers or {})
+    current_spec = current_spec or {}
+
+    if task_type == "email":
+        recipient_identity = (normalized.get("recipient_identity") or "").strip()
+        desired_action = (normalized.get("desired_action") or "").strip()
+
+        if recipient_identity and not (normalized.get("recipient_type") or "").strip():
+            rid_lower = recipient_identity.lower()
+            if any(token in rid_lower for token in ("professor", "teacher", "advisor", "supervisor", "tutor")):
+                normalized["recipient_type"] = "other"
+                normalized["recipient_type_other"] = "professor"
+            elif any(token in recipient_identity for token in ("导师", "教授", "老师")):
+                normalized["recipient_type"] = "other"
+                normalized["recipient_type_other"] = "教授/导师"
+            else:
+                normalized["recipient_type"] = "other"
+                normalized["recipient_type_other"] = recipient_identity
+
+        if desired_action:
+            existing = (normalized.get("must_include") or "").strip()
+            line = f"希望对方执行的动作：{desired_action}"
+            if line not in existing:
+                normalized["must_include"] = f"{existing}\n{line}".strip() if existing else line
+
+        # 当当前追问 schema 未展示 include_deadline 时，不应强制 deadline。
+        if "include_deadline" not in normalized:
+            prior = ((current_spec.get("constraints") or {}).get("must_include_deadline"))
+            normalized["include_deadline"] = bool(prior) if prior is not None else False
+
+        if "include_bullets" not in normalized:
+            prior = ((current_spec.get("constraints") or {}).get("must_include_bullets"))
+            normalized["include_bullets"] = bool(prior) if prior is not None else True
+
+    return normalized

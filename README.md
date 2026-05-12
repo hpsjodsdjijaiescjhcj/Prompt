@@ -1,343 +1,170 @@
 # TaskForge
 
-[中文版本](./README.zh-CN.md)
+[中文说明](./README.zh-CN.md)
 
-**Slogan:** Turn vague requests into executable AI tasks.  
-**Subtitle:** An AI task orchestration layer that turns vague requests into executable specs, model choices, and model-adapted prompts.
+TaskForge is an AI task workflow backend + UI prototype.
+It turns vague user requests into a structured workflow:
 
-TaskForge is an AI task clarification and orchestration product for real-world work.  
-It is not just a prompt utility, and not a thin wrapper that copies user input into a model prompt. It is a middle layer that turns vague user requests into executable task specs.
+`Clarify -> Spec Align -> Preflight Check -> Execute -> Validate -> (Optional Repair)`
 
-Its core goal is straightforward: **when a user describes a task in natural language, the system should understand the request, fill in critical missing context, align the task spec, choose the right model, generate model-adapted instructions, and then support reliable delivery.**
+## What It Does
 
----
+- Accepts natural language task requests
+- Detects missing info and asks only required follow-up fields
+- Routes to task handlers (`email`, `writing`, `code`, `generic`)
+- Builds structured task specs
+- Generates model-adapted prompts
+- Supports execution adapters (`prompt_only`, `openai_compatible`, `local_lmstudio`)
+- Runs pre-execution logic checks (plan graph for `email` and `generic`)
+- Runs post-execution validation and one-pass repair attempt
 
-## Product Positioning
+## Tech Stack
 
-In most AI products, the actual problem is not the lack of models. The real problems are:
+- Backend: Python, Flask
+- Frontend: React 18
+- LLM/API: Gemini (classification/understanding path), OpenAI-compatible executor path
+- Optional infra:
+  - MySQL for workflow session persistence
+  - Redis for session cache + idempotency response cache
 
-- users do not know how to describe a task well
-- users do not know what information is required
-- users do not know why a result is poor
-- users do not know which model fits the task
-- users do not know how to turn a vague intent into a stable executable request
+## Quick Start
 
-TaskForge addresses the gap between a user request and an AI-executable task.
+### 1) Backend
 
-It acts as an orchestration layer:
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+python app.py
+```
 
-- upward: it receives raw natural-language requests from users
-- downward: it connects to models today and future agents tomorrow
-- in the middle: it handles clarification, alignment, structuring, model selection, instruction adaptation, and validation
+Backend runs at `http://127.0.0.1:5001`.
 
----
+### 2) Frontend
 
-## What This Product Actually Solves
+```bash
+cd frontend
+npm install
+npm start
+```
 
-### 1. It lowers the cost of expressing a task
+Frontend runs at `http://127.0.0.1:3000`.
 
-Many users know what they want, but they do not know how to phrase it in a way that AI can execute well.  
-TaskForge does not require users to fully specify everything up front. It accepts an incomplete request first, then helps fill in the critical context.
+## Optional Production-like Infra Setup
 
-### 2. It upgrades AI usage from “ask once” to “complete a task”
+Start infra services (MySQL + Redis):
 
-Most chat-style AI products are optimized for one-shot answers.  
-TaskForge is optimized for task completion:
+```bash
+docker compose up -d mysql redis
+```
 
-- detect whether the request is specific enough
-- ask only for missing information that materially affects quality
-- normalize the task into a shared spec
-- choose the right model and instruction format
-- validate whether the result actually matches the goal
+Set environment variables in `backend/.env`:
 
-This means the product is not only about generating content. It is about increasing task success rate.
+```env
+# Workflow store backend: memory | mysql
+WORKFLOW_STORE_BACKEND=mysql
 
-### 3. It reduces rework
+# MySQL (SQLAlchemy URL)
+MYSQL_URL=mysql+pymysql://user:password@127.0.0.1:3306/taskforge?charset=utf8mb4
 
-Poor AI output is often caused by missing information before execution even begins.  
-TaskForge tries to absorb that failure earlier, inside the clarification and alignment stages, instead of forcing users into repeated retries after the result is already bad.
+# Redis (optional but recommended)
+REDIS_URL=redis://127.0.0.1:6379/0
+REDIS_PREFIX=taskforge
+```
 
-### 4. It creates the foundation for future agent automation
+If `WORKFLOW_STORE_BACKEND=mysql` is set and MySQL is reachable, workflow sessions are persisted to MySQL.
+If Redis is configured, session cache and idempotency cache are enabled.
 
-If the system is expected to evolve into multi-step execution, agent automation, or multi-model coordination, then structured task representation is mandatory.  
-TaskForge is not yet a full autonomous agent system, but it already builds the prerequisite layer:
+### Initialize MySQL Schema (SQL file)
 
-- unified task representation
-- missing-information detection
-- goal and acceptance alignment
-- extensible orchestration paths
+Option A (recommended): run SQL directly
 
-### 5. Different AI models need different instruction styles
+```bash
+mysql -u root -p < backend/sql/001_init_taskforge.sql
+```
 
-The same task should not be expressed the same way to every model.  
-Some models respond better to structured constraints. Some prefer stronger role framing. Some are better at code editing, and others at long-form analysis.
+Option B: initialize via Python script (uses `MYSQL_URL`)
 
-At this stage, one of TaskForge’s most practical values is that after understanding the task, it continues to do two things:
+```bash
+cd backend
+python scripts/init_mysql.py
+```
 
-- choose a better-fit AI for the task
-- generate instructions adapted to that model’s strengths
+Option C: use Alembic migration
 
-So the product is not only helping users organize intent. It is also translating intent into a model-specific form that is more likely to execute well.
+```bash
+cd backend
+alembic -c alembic.ini upgrade head
+```
 
----
+## API (Core)
 
-## Core Advantages
+- `POST /api/workflow/start`
+- `POST /api/workflow/clarify`
+- `POST /api/workflow/confirm_spec`
+- `POST /api/workflow/execute`
+- `POST /api/workflow/validate`
+- `GET /openapi.json`
+- `GET /metrics`
+- `GET /api/health/liveness`
+- `GET /api/health/readiness`
 
-### 1. It does not throw raw user text directly at a model
+## Async API (v1)
 
-This is the biggest difference from many prompt wrappers.  
-TaskForge does not stop at rewriting input. It first asks:
+- `POST /api/v1/workflow/start`
+- `POST /api/v1/workflow/clarify`
+- `POST /api/v1/workflow/confirm_spec`
+- `POST /api/v1/workflow/execute` (returns `job_id`)
+- `POST /api/v1/workflow/validate` (returns `job_id`)
+- `GET /api/v1/jobs/{job_id}`
 
-- is the task already clear enough
-- what information is already present
-- what information is missing but important
-- should the task be clarified before execution
+Legacy compatibility endpoint remains:
 
-### 2. It emphasizes minimum necessary clarification
+- `POST /api/analyze`
 
-The goal is not to ask more questions.  
-The goal is to ask only the questions that materially affect output quality, so users get better results with less interaction cost.
+## Current Stage
 
-### 3. It moves from task classification to task normalization
+This project is still MVP.
+Main limitations today:
 
-The system does not merely classify tasks. It gradually converts them into a unified task spec.  
-That makes it easier for different models, executors, and future agents to operate around the same task representation.
+- No full async job queue yet
+- No full observability stack yet
+- Idempotency currently focused on workflow execute/validate response caching
 
-### 4. Model choice and instruction adaptation are first-class capabilities
+## Security & Reliability Controls
 
-Many products treat all models as interchangeable APIs. That directly loses quality.  
-TaskForge treats “which model should handle this task” and “how that model should be instructed” as core product behavior.
+- API key auth (optional): set `AUTH_ENABLED=true` and `API_KEY=...`, send `X-API-Key`
+- Rate limit (optional, Redis required): set `RATE_LIMIT_ENABLED=true`
+- Request trace header: every response includes `X-Request-Id`
 
-That creates immediate value:
+## Run Celery Worker
 
-- users do not need to understand model differences themselves
-- the same task gets a more model-native instruction style
-- model recommendation is not cosmetic; it affects delivery quality
+```bash
+cd backend
+celery -A celery_app.celery worker -l INFO
+```
 
-### 5. It is explainable and extensible
+Or run full stack with containers:
 
-TaskForge is not a black box. It can expose:
+```bash
+docker compose up -d api worker mysql redis
+```
 
-- why clarification is needed
-- which key fields are still missing
-- which workflow stage the task is currently in
-- why a model or execution route is being recommended
+## Test
 
-That makes it more suitable for iteration than systems that only produce output and hide reasoning.
+```bash
+cd backend
+pytest -q
+```
 
-### 6. Lightweight models first, lower API cost
+Run integration tests (MySQL + Redis required):
 
-TaskForge does not assume every understanding task should depend on expensive online foundation models.
+```bash
+pytest -q -m integration
+```
 
-The project already includes a lightweight model path for frequent, lower-level understanding work:
+## License
 
-- initial routing
-- basic slot extraction
-- low-cost task understanding
-- simple structured judgments
-- low-cost pre-routing model decisions
-
-This matters because it:
-
-- reduces online API usage
-- improves responsiveness
-- creates room for domain-specific iteration
-- makes the system more controllable as an engineering product
-
-### 7. Validation is moving from shallow checks to adversarial logic verification
-
-TaskForge is not limited to format validation or surface-level output checks.  
-Its next major advantage is a stronger verification layer built around three ideas:
-
-- an adversarial verifier that actively looks for logical failure points
-- a symbolic or structured view of the task instead of pure natural-language debate
-- residual repair that focuses only on broken parts instead of regenerating everything
-
-This direction matters because it upgrades validation from:
-
-`did the output look acceptable`
-
-to:
-
-`is the task plan logically sound, executable under constraints, and robust against hostile edge cases`
-
-That is the bridge between today’s orchestration layer and tomorrow’s reliable agent systems.
-
----
-
-## Current Product Logic
-
-TaskForge currently centers around a simple workflow:
-
-`Clarify -> Align -> Execute -> Validate`
-
-The current implementation is also moving toward a more explicit internal backbone for this workflow:
-
-- a **Unified Task Spec shell** that wraps task-specific specs with a stable product-level structure
-- a **Spec Gap Detector** that decides whether the task is ready or still missing critical fields
-- a **Risk Policy** that decides whether the task can proceed, needs clarification, or needs confirmation
-- a **Lightweight Validator** that performs low-cost pre-execution and post-execution checks before heavier validation layers
-- a lightweight **HookManager** that can inject logic at lifecycle events (`before_clarify`, `after_spec_generated`, `before_execution`, `after_execution`, `before_final_output`, `on_validation_failed`)
-- two-layer memory (`ProjectMemory` + `RunMemory`) so long-term preferences and run-time state are tracked separately
-- a built-in **Skill Registry** (`cold_email`, `resume_bullet`, `sop_paragraph`, `task_breakdown`) for reusable workflow intent patterns
-- a one-pass **Repair Loop** that can attempt a revision when validation fails and a runnable executor is available
-
-### Clarify
-
-The system first checks whether the request is specific enough.  
-If not, it asks only the most important questions instead of dumping a generic form onto the user.
-
-### Align
-
-The request is normalized into a shared task spec that makes the following explicit:
-
-- what the actual objective is
-- who or what the task targets
-- what constraints and boundaries exist
-- what counts as an acceptable result
-
-### Execute
-
-Execution is not only about “running a model.” It also includes:
-
-- selecting a suitable AI for the task
-- adapting the instruction format to the chosen model
-- producing high-quality, model-specific prompts when prompt-only delivery is the right choice
-
-In other words, model selection and instruction adaptation are already part of product delivery.
-
-### Validate
-
-Generation is not treated as the finish line.  
-The system can still check whether the output meets the original goal and constraints.
-
-At the current stage, validation already includes a first-phase prototype of:
-
-- pre-execution plan graph validation for `email` and `generic`
-- pre-execution logic gating
-- plan-outline generation
-- adversarial failure discovery
-- residual repair targeting
-
-In other words, the system is starting to verify not only whether an answer exists, but also where its logic is weak and which part should be repaired first.
-
-The validation layer is now explicitly split into two stages:
-
-- **Pre-execution graph validation**
-  - builds a `plan_graph` from the confirmed spec for `email` and `generic`
-  - checks required steps, dependency closure, missing preconditions, and fragile edges
-  - blocks execution when the graph is not executable enough
-- **Post-execution output validation**
-  - checks the delivered output against the spec, acceptance criteria, and adversarial logic checks
-  - points to residual repair targets after generation
-
-This is an operational first step toward adversarial residual logic verification. It is **not yet** full symbolic planning, PDDL compilation, multi-agent debate, or automatic local repair.
-
-In practice, validation is now layered:
-
-- a lightweight validator for spec completeness, basic constraints, and goal coverage
-- explicit pre-execution plan graph validation for `email` and `generic`
-- post-execution output validation and adversarial residual logic checks
-
-Lifecycle hooks and memory are now part of the orchestration runtime:
-
-- `ProjectMemory`: persistent preferences (for example output style and clarification policy)
-- `RunMemory`: per-session events, snapshots, and validation failure traces
-- `Hook trace`: event-level execution trace exposed in workflow responses for explainability
-
-Skill and repair are now exposed in workflow responses as first-class runtime signals:
-
-- `skill_selection` and `skill_suggestions`: lightweight skill routing hints
-- `repair_result`: whether a repair attempt was triggered, succeeded, or skipped with a reason (`not_requested`, `executor_not_runnable`, etc.)
-
----
-
-## How It Differs from Typical Prompt Tools
-
-Typical prompt tools usually follow this logic:
-
-`user input -> wrap as a prompt -> done`
-
-TaskForge follows a different logic:
-
-`user input -> detect ambiguity -> fill missing context -> normalize the task -> choose the model -> generate model-adapted instructions -> execute -> validate`
-
-That makes it a task orchestration layer, not just a prompt editor.
-
----
-
-## Why Train a Lightweight Model
-
-If all task understanding is delegated to expensive online models, the tradeoffs are obvious:
-
-- higher cost
-- higher latency
-- lower controllability
-- worse iteration economics
-
-That is why TaskForge is not only a workflow design project. It is also trying to build its own basic understanding layer.
-
-The role of the lightweight model is not to replace all large models. Its role is to absorb high-frequency, structured, lower-cost understanding work such as:
-
-- task category detection
-- early information extraction
-- missing slot detection
-- simple intent recognition
-- low-cost model-routing preparation
-
-That allows larger models to focus on harder, higher-value stages.
-
-Over time, this lightweight path can expand beyond routing into specialized verification roles, such as:
-
-- logic gap detection
-- edge-case discovery
-- partial plan repair
-- low-cost validation before expensive execution
-
----
-
-## Suitable Use Cases
-
-TaskForge is well suited for scenarios where users know what they want, but cannot yet express the task in a fully executable way, such as:
-
-- writing and content creation
-- email and business communication
-- analysis and explanation tasks
-- code and development requests
-- tasks with multiple constraints
-
-It is also suitable as a base layer for future evolution into:
-
-- agent automation
-- multi-model collaboration
-- domain-specific task understanding
-- long-term user preference learning
-
----
-
-## Value at the Current Stage
-
-The current value of the project is not that it already replaces all AI products.  
-Its value is that it is moving in a more correct direction:
-
-- AI use is not treated as one-shot Q&A
-- prompts are not treated as the final product
-- model power alone is not treated as the answer to task failure
-- task understanding, normalization, model selection, instruction adaptation, orchestration, and validation are treated as core product capabilities
-
-That is exactly what makes it a credible base for future agent automation.
-
----
-
-## Summary
-
-**TaskForge is an orchestration layer that forges vague user intent into executable AI tasks.**
-
-Its value is not “writing a few better prompts.” Its value is:
-
-- helping users make the task clear
-- helping the system structure the task
-- helping users choose a better-fit AI
-- generating instructions adapted to different model strengths
-- improving execution stability
-- preparing the path toward agent automation
+Internal/Personal project (adjust as needed).

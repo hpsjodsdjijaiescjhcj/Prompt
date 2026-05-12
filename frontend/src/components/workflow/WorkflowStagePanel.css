@@ -1,0 +1,517 @@
+/**
+ * WorkflowStagePanel Styles
+ * 
+ * Collapsible stage display with clear visual hierarchy
+ */
+
+.workflow-stage-panel {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+  border: 1px solid #e0e0e0;
+}
+
+.stage-panel-header {
+  margin-bottom: 16px;
+  border-bottom: 2px solid #e0e0e0;
+  padding-bottom: 12px;
+}
+
+.stage-panel-header h3 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.stage-panel-subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: #666;
+}
+
+.stages-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Stage Item */
+.stage-item {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: white;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.stage-item.completed {
+  border-color: #4caf50;
+  background: #f1f8f4;
+}
+
+.stage-item.failed {
+  border-color: #f44336;
+  background: #fef5f5;
+}
+
+.stage-item.pending {
+  border-color: #ff9800;
+  background: #fff8f0;
+}
+
+.stage-item.expanded {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Stage Header */
+.stage-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  text-align: left;
+}
+
+.stage-header:hover {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.stage-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.stage-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.stage-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin: 0;
+}
+
+.stage-status {
+  font-size: 12px;
+  color: #666;
+  margin: 2px 0 0 0;
+}
+
+.stage-toggle {
+  font-size: 12px;
+  color: #999;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.stage-item.expanded .stage-toggle {
+  transform: rotate(0deg);
+}
+
+/* Stage Content */
+.stage-content {
+  padding: 16px;
+  border-top: 1px solid #e0e0e0;
+  background: #fafafa;
+}
+
+.stage-section {
+  margin-bottom: 16px;
+}
+
+.stage-section:last-child {
+  margin-bottom: 0;
+}
+
+.stage-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stage-data {
+  background: white;
+  padding: 12px;
+  border-radius: 4px;
+  border: 1px solid #e0e0e0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #333;
+  overflow-x: auto;
+}
+
+.stage-data p {
+  margin: 0;
+  word-break: break-word;
+}
+
+.stage-data pre {
+  margin: 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #333;
+  background: #f5f5f5;
+  padding: 8px;
+  border-radius: 3px;
+  overflow-x: auto;
+}
+
+/* Answers Display */
+.answers-display {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.answer-item {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: white;
+  border-radius: 4px;
+  border-left: 3px solid #2196f3;
+}
+
+.answer-item strong {
+  color: #333;
+  min-width: 120px;
+  flex-shrink: 0;
+}
+
+.answer-item span {
+  color: #666;
+  flex: 1;
+  word-break: break-word;
+}
+
+/* Schema Display */
+.schema-display {
+  background: white;
+  padding: 12px;
+  border-radius: 4px;
+  border: 1px solid #e0e0e0;
+}
+
+.schema-title {
+  margin: 0 0 4px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+}
+
+.schema-description {
+  margin: 0 0 12px 0;
+  font-size: 12px;
+  color: #666;
+}
+
+.schema-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.schema-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  background: #f9f9f9;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.field-label {
+  font-weight: 600;
+  color: #333;
+  flex: 1;
+}
+
+.field-type {
+  background: #e3f2fd;
+  color: #1976d2;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.field-required {
+  background: #ffebee;
+  color: #c62828;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* Spec Display */
+.spec-display {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.spec-item {
+  background: white;
+  padding: 12px;
+  border-radius: 4px;
+  border: 1px solid #e0e0e0;
+}
+
+.spec-item strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #333;
+  font-size: 13px;
+}
+
+.spec-item p {
+  margin: 0;
+  color: #666;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.spec-item pre {
+  margin: 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #333;
+  background: #f5f5f5;
+  padding: 8px;
+  border-radius: 3px;
+  overflow-x: auto;
+}
+
+.spec-item ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #666;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.spec-item li {
+  margin-bottom: 4px;
+}
+
+/* Validation Display */
+.validation-display {
+  background: white;
+  padding: 12px;
+  border-radius: 4px;
+  border: 1px solid #e0e0e0;
+}
+
+.validation-display.passed {
+  border-color: #4caf50;
+  background: #f1f8f4;
+}
+
+.validation-display.failed {
+  border-color: #f44336;
+  background: #fef5f5;
+}
+
+.validation-status {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  padding: 8px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.validation-display.passed .validation-status {
+  color: #2e7d32;
+}
+
+.validation-display.failed .validation-status {
+  color: #c62828;
+}
+
+.issues-list {
+  margin-top: 12px;
+}
+
+.issues-list strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #333;
+}
+
+.issues-list ul {
+  margin: 0;
+  padding-left: 20px;
+  list-style: none;
+}
+
+.issues-list li {
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.severity-error {
+  color: #d32f2f;
+  font-weight: 600;
+}
+
+.severity-warning {
+  color: #f57c00;
+  font-weight: 600;
+}
+
+.severity-info {
+  color: #1976d2;
+  font-weight: 600;
+}
+
+.suggestion {
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.02);
+  border-left: 2px solid #ff9800;
+  font-size: 11px;
+  color: #666;
+  font-style: italic;
+}
+
+/* Execution Display */
+.execution-display {
+  background: white;
+  padding: 12px;
+  border-radius: 4px;
+  border: 1px solid #e0e0e0;
+}
+
+.execution-meta {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e0e0e0;
+  font-size: 12px;
+  color: #666;
+}
+
+.execution-output strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #333;
+}
+
+.execution-output pre {
+  margin: 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #333;
+  background: #f5f5f5;
+  padding: 8px;
+  border-radius: 3px;
+  overflow-x: auto;
+}
+
+/* Stage Details */
+.stage-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: white;
+  padding: 12px;
+  border-radius: 4px;
+  border: 1px solid #e0e0e0;
+}
+
+.detail-item {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.detail-label {
+  font-weight: 600;
+  color: #333;
+  min-width: 100px;
+  flex-shrink: 0;
+}
+
+.detail-value {
+  color: #666;
+  flex: 1;
+  word-break: break-word;
+}
+
+/* Dynamic Criteria */
+.dynamic-criteria {
+  margin-top: 12px;
+  padding: 12px;
+  background: #e8f5e9;
+  border-left: 3px solid #4caf50;
+  border-radius: 4px;
+}
+
+.criteria-hint {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2e7d32;
+}
+
+.dynamic-criteria ul {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12px;
+  color: #333;
+  line-height: 1.6;
+}
+
+.dynamic-criteria li {
+  margin-bottom: 4px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .workflow-stage-panel {
+    padding: 12px;
+  }
+
+  .stage-header {
+    padding: 10px 12px;
+  }
+
+  .stage-content {
+    padding: 12px;
+  }
+
+  .stage-data,
+  .stage-details,
+  .spec-item,
+  .validation-display,
+  .execution-display {
+    font-size: 12px;
+  }
+
+  .stage-data pre,
+  .execution-output pre {
+    font-size: 11px;
+  }
+}

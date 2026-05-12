@@ -254,24 +254,28 @@ class EmailTaskHandler(TaskHandler):
         }
 
     def build_spec(self, text: str, answers: dict) -> dict:
-        clarified_request = (answers.get("clarified_request") or "").strip()
+        clarified_request = _polish_free_text(answers.get("clarified_request") or "")
         success_criteria = _lines_to_list(answers.get("success_criteria", ""))
         hard_constraints = _lines_to_list(answers.get("hard_constraints", ""))
         output_preference = answers.get("output_preference", "direct")
         intent_frame = _build_intent_frame(answers)
 
         purpose = answers.get("purpose", "other")
-        custom_purpose = (answers.get("purpose_other") or "").strip()
+        custom_purpose = _polish_free_text(answers.get("purpose_other") or "")
         custom_recipient = (answers.get("recipient_type_other") or "").strip()
-        background = (answers.get("background") or "").strip()
+        recipient_identity = _polish_free_text(answers.get("recipient_identity") or "")
+        desired_action = _polish_free_text(answers.get("desired_action") or "")
+        background = _polish_free_text(answers.get("background") or "")
         order_or_po_number = (answers.get("order_or_po_number") or "").strip()
-        current_blocker = (answers.get("current_blocker") or "").strip()
-        deadline_text = (answers.get("deadline_text") or "").strip()
-        bullet_focus = (answers.get("bullet_focus") or "").strip()
+        current_blocker = _polish_free_text(answers.get("current_blocker") or "")
+        deadline_text = _polish_free_text(answers.get("deadline_text") or "")
+        bullet_focus = _polish_free_text(answers.get("bullet_focus") or "")
         invoice_type = answers.get("invoice_type")
         invoice_type_other = (answers.get("invoice_type_other") or "").strip()
 
         must_include = _lines_to_list(answers.get("must_include", ""))
+        if desired_action:
+            must_include.append(f"希望对方执行：{desired_action}")
         if order_or_po_number:
             must_include.append(f"订单号/PO号：{order_or_po_number}")
         if deadline_text:
@@ -287,8 +291,8 @@ class EmailTaskHandler(TaskHandler):
 
         must_avoid = _lines_to_list(answers.get("must_avoid", ""))
 
-        include_deadline = bool(answers.get("include_deadline", True))
-        include_bullets = bool(answers.get("include_bullets", True))
+        include_deadline = bool(answers.get("include_deadline")) if "include_deadline" in answers else False
+        include_bullets = bool(answers.get("include_bullets")) if "include_bullets" in answers else True
         word_limit = int(answers.get("word_limit", 200) or 200)
 
         acceptance = [
@@ -306,6 +310,7 @@ class EmailTaskHandler(TaskHandler):
             f"{PURPOSE_TO_OBJECTIVE.get(purpose, PURPOSE_TO_OBJECTIVE['other'])} "
             f"Custom purpose: {custom_purpose}. Original request: {text}"
         ).strip()
+        objective = _rephrase_email_objective(objective, recipient_identity, desired_action)
 
         spec = {
             "task_type": "email",
@@ -316,10 +321,13 @@ class EmailTaskHandler(TaskHandler):
                 "order_or_po_number": order_or_po_number,
                 "current_blocker": current_blocker,
                 "intent_frame": intent_frame,
+                "desired_action": desired_action,
+                "recipient_identity": recipient_identity,
             },
             "audience": {
                 "recipient_type": custom_recipient or answers.get("recipient_type", "vendor"),
                 "relationship": answers.get("relationship", "existing"),
+                "recipient_label": recipient_identity,
             },
             "language": answers.get("language", "en"),
             "tone": answers.get("tone", "professional"),
@@ -379,8 +387,37 @@ def _merge_list_unique(base: list[str], extra: list[str]) -> list[str]:
 
 def _build_intent_frame(answers: dict) -> dict:
     return {
-        "motivation": (answers.get("motivation") or "").strip(),
-        "primary_target": (answers.get("primary_target") or "").strip(),
-        "stakeholders": (answers.get("stakeholders") or "").strip(),
+        "motivation": _polish_free_text(answers.get("motivation") or ""),
+        "primary_target": _polish_free_text(answers.get("primary_target") or ""),
+        "stakeholders": _polish_free_text(answers.get("stakeholders") or ""),
         "style_modifiers": _lines_to_list(answers.get("style_modifiers", "")),
     }
+
+
+def _polish_free_text(text: str) -> str:
+    s = " ".join(str(text or "").replace("\n", " ").split()).strip()
+    if not s:
+        return ""
+    parts = [p.strip() for p in re.split(r"(?<=[.!?。！？])\s+|[;；]\s*", s) if p.strip()]
+    seen = set()
+    dedup = []
+    for p in parts:
+        key = p.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup.append(p)
+    return " ".join(dedup)
+
+
+def _rephrase_email_objective(objective: str, recipient_identity: str, desired_action: str) -> str:
+    if not objective:
+        return ""
+    if recipient_identity and desired_action:
+        return (
+            f"Write a professional email to {recipient_identity} that clearly explains the context "
+            f"and requests this next action: {desired_action}."
+        )
+    if recipient_identity:
+        return f"Write a professional email to {recipient_identity} with clear context and a specific request."
+    return objective

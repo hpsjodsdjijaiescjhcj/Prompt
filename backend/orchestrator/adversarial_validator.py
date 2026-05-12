@@ -357,7 +357,9 @@ def _spec_has_core_message(spec: dict) -> bool:
     context = spec.get("context") or {}
     background = (context.get("background") or "").strip()
     must_include = spec.get("must_include") or []
-    return len(background) >= 12 or len(must_include) >= 1
+    label_context = context.get("label_context") or {}
+    label_signal = any(str(v).strip() for v in label_context.values() if v is not None)
+    return len(background) >= 12 or len(must_include) >= 1 or label_signal
 
 
 def _spec_has_verification_path(spec: dict) -> bool:

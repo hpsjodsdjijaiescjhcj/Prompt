@@ -152,11 +152,10 @@ class GenericTaskHandler(TaskHandler):
         output_type = answers.get("expected_output_type", "structured")
         output_type_other = (answers.get("expected_output_type_other") or "").strip()
 
-        acceptance = [
-            "结果应准确回应用户目标。",
-            "结构清晰，可直接使用。",
-            "符合硬性约束。",
-        ]
+        acceptance = _build_default_acceptance(
+            output_type=output_type_other or output_type,
+            audience=answers.get("target_audience", ""),
+        )
         acceptance = _merge_list_unique(acceptance, success_criteria)
 
         objective = clarified_request or text
@@ -219,15 +218,6 @@ class GenericTaskHandler(TaskHandler):
 
 def _render_generic_prompt(spec: dict) -> str:
     weather = (spec.get("context") or {}).get("weather") or {}
-    weather_block = ""
-    if weather:
-        weather_lines = [
-            f"- location: {weather.get('location', '')}",
-            f"- time_range: {weather.get('time_range', '')}",
-            f"- focus: {weather.get('weather_focus', [])}",
-            f"- unit: {weather.get('unit', 'c')}",
-        ]
-        weather_block = f"- 天气查询参数：\n{chr(10).join(weather_lines)}\n"
     criteria = "\n".join(f"- {x}" for x in (spec.get("acceptance_criteria") or [])) or "- (无)"
     hard_constraints = "\n".join(
         f"- {x}" for x in ((spec.get("constraints") or {}).get("hard_constraints") or [])
@@ -252,19 +242,45 @@ def _render_generic_prompt(spec: dict) -> str:
         "options_then_pick": "先给 2-3 个方案，再展开你认为最优的一个。",
     }.get(output_pref, "直接给最终结果。")
 
+    normalized_goal = _rewrite_goal(
+        objective=(spec.get("objective") or "").strip(),
+        domain=(spec.get("domain") or "").strip(),
+        audience=((spec.get("audience") or {}).get("target") or "").strip(),
+        output_type=(spec.get("output_format") or {}).get("type", "structured"),
+    )
+    output_contract = _build_output_contract(
+        domain=(spec.get("domain") or "").strip(),
+        output_type=(spec.get("output_format") or {}).get("type", "structured"),
+        weather=weather,
+    )
+    context_lines = [f"- 背景：{(spec.get('context') or {}).get('background', '') or '未提供'}"]
+    if weather:
+        focus = weather.get("weather_focus") or []
+        focus_text = ", ".join(focus) if focus else "默认关键指标"
+        context_lines.extend(
+            [
+                f"- 地点：{weather.get('location', '') or '未提供'}",
+                f"- 时间范围：{weather.get('time_range', '') or '未提供'}",
+                f"- 重点指标：{focus_text}",
+                f"- 单位偏好：{weather.get('unit', 'c')}",
+            ]
+        )
+    context_block = "\n".join(context_lines)
+
     return (
         "你是资深任务执行顾问。请基于下述规范，输出高质量、可直接使用的结果。\n\n"
         "【任务目标】\n"
         f"- 原始请求：{spec.get('original_request', '')}\n"
-        f"- 规范化目标：{spec.get('objective', '')}\n"
+        f"- 规范化目标：{normalized_goal}\n"
         f"- 任务大类：{spec.get('domain', '')}\n"
         f"- 受众：{(spec.get('audience') or {}).get('target', '') or '通用读者'}\n\n"
         "【上下文】\n"
         f"{intent_block}\n"
-        f"- 背景：{(spec.get('context') or {}).get('background', '') or '未提供'}\n"
-        f"{weather_block}\n"
+        f"{context_block}\n\n"
         "【执行约束】\n"
-        f"{hard_constraints}\n\n"
+        f"{hard_constraints}\n"
+        "【输出结构】\n"
+        f"{output_contract}\n\n"
         "【输出要求】\n"
         f"- 输出形式：{output_type}\n"
         f"- 输出策略：{workflow_hint}\n"
@@ -306,3 +322,57 @@ def _looks_like_weather_query(text: str) -> bool:
     t = (text or "").lower()
     weather_words = ["天气", "气温", "降雨", "wind", "temperature", "forecast", "weather"]
     return any(w in t for w in weather_words)
+
+
+def _rewrite_goal(objective: str, domain: str, audience: str, output_type: str) -> str:
+    obj = (objective or "").strip()
+    if not obj:
+        obj = "围绕用户请求完成可执行交付"
+    domain_label = domain or "analysis"
+    audience_label = audience or "通用读者"
+    style_label = {
+        "structured": "结构化结论",
+        "step_by_step": "分步骤方案",
+        "comparison": "对比结论",
+        "checklist": "执行清单",
+    }.get(output_type, output_type or "结构化输出")
+    return f"围绕「{obj}」，输出面向「{audience_label}」的「{domain_label}」结果，并以「{style_label}」交付。"
+
+
+def _build_output_contract(domain: str, output_type: str, weather: dict) -> str:
+    # 通用合同，不绑定某个具体任务，按输出类型与上下文动态构建。
+    sections = []
+    if output_type == "step_by_step":
+        sections = ["1) 目标定义", "2) 关键步骤", "3) 每步产出", "4) 风险与替代方案", "5) 下一步行动"]
+    elif output_type == "comparison":
+        sections = ["1) 比较维度", "2) 方案A/B要点", "3) 差异总结", "4) 选择建议"]
+    elif output_type == "checklist":
+        sections = ["1) 执行清单", "2) 验收点", "3) 常见风险与规避"]
+    else:
+        sections = ["1) 核心结论", "2) 关键依据", "3) 可执行建议", "4) 风险与边界"]
+
+    if weather:
+        sections.insert(1, "2) 时空参数说明（地点/时间范围/指标）")
+
+    if domain and domain not in {"analysis", "research", "writing", "planning", "weather_query"}:
+        sections.append(f"补充：结合任务域「{domain}」给出专属建议")
+
+    return "\n".join(f"- {row}" for row in sections)
+
+
+def _build_default_acceptance(output_type: str, audience: str) -> list[str]:
+    base = [
+        "结果应准确回应用户目标。",
+        "结构清晰，可直接使用。",
+        "符合硬性约束。",
+    ]
+    audience_text = (audience or "").strip()
+    if audience_text:
+        base.append(f"表达应匹配目标受众（{audience_text}）的理解成本。")
+    if output_type == "comparison":
+        base.append("比较维度需一致，结论需可追溯。")
+    elif output_type == "step_by_step":
+        base.append("步骤之间应有前后依赖关系，且每步可执行。")
+    elif output_type == "checklist":
+        base.append("清单项需可核对、可勾选。")
+    return base

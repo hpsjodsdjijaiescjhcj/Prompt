@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+import json
+
+
+def _render_clarify_payload(spec: dict) -> str:
+    payload = ((spec.get("context") or {}).get("clarify_payload") or {})
+    if not payload:
+        return "- (none)"
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
 
 def render_email_prompt(spec: dict) -> str:
     audience = spec.get("audience", {})
@@ -31,6 +40,7 @@ def render_email_prompt(spec: dict) -> str:
     if context.get("deadline_text"):
         context_lines.append(f"- Deadline detail: {context['deadline_text']}")
     context_text = "\n".join(context_lines) or "- (none)"
+    clarify_payload = _render_clarify_payload(spec)
 
     return (
         "You are an expert business writing assistant. Draft ONE final email exactly matching the spec.\n\n"
@@ -38,11 +48,13 @@ def render_email_prompt(spec: dict) -> str:
         f"Language: {spec.get('language', 'en')}\n"
         f"Tone: {spec.get('tone', 'professional')}\n"
         f"Recipient type: {audience.get('recipient_type', '')}\n"
+        f"Recipient label: {audience.get('recipient_label', '')}\n"
         f"Relationship: {audience.get('relationship', '')}\n"
         f"Word limit: {constraints.get('word_limit', 200)}\n"
         f"Must include deadline: {constraints.get('must_include_deadline', False)}\n"
         f"Must include bullets: {constraints.get('must_include_bullets', False)}\n\n"
         f"Context:\n{context_text}\n\n"
+        f"Structured user inputs (must be honored):\n{clarify_payload}\n\n"
         f"Must include:\n{must_include}\n\n"
         f"Must avoid:\n{must_avoid}\n\n"
         f"Output sections:\n{sections}\n\n"
@@ -68,6 +80,7 @@ def render_code_prompt(spec: dict) -> str:
     if intent.get("style_modifiers"):
         intent_lines.append(f"- Style modifiers: {', '.join(intent['style_modifiers'])}")
     intent_text = "\n".join(intent_lines) or "- (not provided)"
+    clarify_payload = _render_clarify_payload(spec)
 
     return (
         "You are a senior software engineer. Implement the requested code change in an existing repository.\n\n"
@@ -77,6 +90,7 @@ def render_code_prompt(spec: dict) -> str:
         f"Test requirement: {constraints.get('tests', 'run relevant tests')}\n"
         f"No breaking changes: {constraints.get('no_breaking_changes', True)}\n\n"
         f"Intent frame:\n{intent_text}\n\n"
+        f"Structured user inputs (must be honored):\n{clarify_payload}\n\n"
         f"Potential files/areas:\n{files_text}\n\n"
         f"Acceptance criteria:\n{acceptance}\n\n"
         "Output format priority: 1) unified diff/patch, 2) file-by-file change list with exact code blocks, 3) precise implementation steps."
