@@ -194,6 +194,13 @@ class APIClient {
     return this.request(`/sessions/${sessionId}/validate`, { method: 'POST' });
   }
 
+  /**
+   * Runtime provider status. Does not expose secret values.
+   */
+  async getRuntimeStatus() {
+    return this.request('/runtime');
+  }
+
   // ════════════════════════════════════════════════════════════════════════
   // ERROR HANDLING
   // ════════════════════════════════════════════════════════════════════════

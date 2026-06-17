@@ -8,6 +8,7 @@ from flask import Blueprint, request, jsonify
 import logging
 
 from orchestrator.service_v2 import OrchestrationService
+from orchestrator.llm_gateway import get_runtime_status
 
 logger = logging.getLogger(__name__)
 
@@ -352,5 +353,15 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "service": "orchestration",
-        "version": "2.0"
+        "version": "2.0",
+        "llm": get_runtime_status(),
+    }), 200
+
+
+@orchestration_bp.route('/runtime', methods=['GET'])
+def runtime_status():
+    """Runtime provider status without exposing secrets."""
+    return jsonify({
+        "service": "orchestration",
+        "llm": get_runtime_status(),
     }), 200

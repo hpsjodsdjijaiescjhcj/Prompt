@@ -216,6 +216,70 @@
   border-bottom: 1px solid var(--color-border);
 }
 
+.runtime-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 1rem;
+  background: var(--color-bg-primary);
+}
+
+.runtime-card.configured {
+  border-left: 4px solid var(--color-success);
+}
+
+.runtime-card.fallback {
+  border-left: 4px solid var(--color-warning);
+}
+
+.runtime-card-main {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.runtime-status-dot {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  margin-top: 0.35rem;
+  background: var(--color-warning);
+  flex: 0 0 auto;
+}
+
+.runtime-card.configured .runtime-status-dot {
+  background: var(--color-success);
+}
+
+.runtime-title {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.runtime-description {
+  margin-top: 0.25rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.runtime-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.runtime-meta span {
+  font-size: 0.78rem;
+  line-height: 1.2;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.5rem;
+}
+
 /* ════════════════════════════════════════════════════════════════════════
    Snapshot Panel
    ════════════════════════════════════════════════════════════════════════ */

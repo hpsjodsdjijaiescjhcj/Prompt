@@ -218,6 +218,8 @@ class ExecutionResult:
     execution_time_ms: int
     model_used: str
     tokens_used: Optional[Dict[str, int]] = None
+    inference_mode: str = "fallback_rule"
+    provider: str = "local"
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     
     def to_dict(self) -> Dict[str, Any]:
@@ -413,6 +415,8 @@ class TaskSession:
                 execution_time_ms=exec_data.get("execution_time_ms", 0),
                 model_used=exec_data.get("model_used", ""),
                 tokens_used=exec_data.get("tokens_used"),
+                inference_mode=exec_data.get("inference_mode", "fallback_rule"),
+                provider=exec_data.get("provider", "local"),
                 timestamp=exec_data.get("timestamp", now_iso()),
             )
         

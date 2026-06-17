@@ -22,6 +22,7 @@ from orchestrator.clarify_layer_v3 import ClarifyLayerV3
 from orchestrator.spec_alignment_v2 import SpecAlignmentLayer
 from orchestrator.preflight_v2 import PreflightLayer
 from orchestrator.validation_v2 import ValidationLayer
+from orchestrator.llm_gateway import LLMGateway
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class OrchestrationService:
         """
         self.llm_client = llm_client
         self.store = store
+        self.llm_gateway = LLMGateway()
         
         # Initialize all layers
         self.clarify_layer = ClarifyLayerV3(llm_client=llm_client)
@@ -309,7 +311,7 @@ class OrchestrationService:
             
             # Execute
             start_time = datetime.now(timezone.utc)
-            output, model_used = self._execute_with_fallback(session, prompt)
+            output, model_used, provider, inference_mode, tokens_used = self._execute_with_fallback(session, prompt)
             end_time = datetime.now(timezone.utc)
             
             execution_time_ms = int((end_time - start_time).total_seconds() * 1000)
@@ -319,6 +321,9 @@ class OrchestrationService:
                 output=output,
                 execution_time_ms=execution_time_ms,
                 model_used=model_used,
+                tokens_used=tokens_used,
+                inference_mode=inference_mode,
+                provider=provider,
             )
             
             session.execution_result = execution_result
@@ -330,6 +335,9 @@ class OrchestrationService:
                     "output": output,
                     "execution_time_ms": execution_time_ms,
                     "model_used": model_used,
+                    "tokens_used": tokens_used,
+                    "inference_mode": inference_mode,
+                    "provider": provider,
                 })
             
             return {
@@ -337,6 +345,9 @@ class OrchestrationService:
                 "output": output,
                 "execution_time_ms": execution_time_ms,
                 "model_used": execution_result.model_used,
+                "tokens_used": execution_result.tokens_used,
+                "inference_mode": execution_result.inference_mode,
+                "provider": execution_result.provider,
                 "next_step": "validation",
             }
         
@@ -497,16 +508,26 @@ class OrchestrationService:
 
         return domain, merged_characteristics, boosted_confidence
 
-    def _execute_with_fallback(self, session: TaskSession, prompt: str) -> Tuple[str, str]:
+    def _execute_with_fallback(self, session: TaskSession, prompt: str) -> Tuple[str, str, str, str, Optional[Dict]]:
         """Run with best available executor and safe degradation."""
+        if self.llm_gateway.is_configured():
+            try:
+                response = self.llm_gateway.chat(prompt)
+                return response.text, response.model, response.provider, "api_primary", response.tokens_used
+            except Exception as exc:
+                logger.warning("Configured LLM gateway failed; falling back locally for session %s: %s", session.session_id, exc)
+
         if self.llm_client:
-            if hasattr(self.llm_client, "generate"):
-                return self.llm_client.generate(prompt), getattr(self.llm_client, "model_name", "configured-llm")
-            if hasattr(self.llm_client, "chat"):
-                return self.llm_client.chat(prompt), getattr(self.llm_client, "model_name", "configured-llm")
+            try:
+                if hasattr(self.llm_client, "generate"):
+                    return self.llm_client.generate(prompt), getattr(self.llm_client, "model_name", "configured-llm"), "legacy", "api_legacy", None
+                if hasattr(self.llm_client, "chat"):
+                    return self.llm_client.chat(prompt), getattr(self.llm_client, "model_name", "configured-llm"), "legacy", "api_legacy", None
+            except Exception as exc:
+                logger.warning("Legacy llm_client failed; falling back locally for session %s: %s", session.session_id, exc)
 
         logger.warning("No compatible llm_client found; using deterministic fallback for session %s", session.session_id)
-        return self._render_fallback_output(session), "deterministic-fallback"
+        return self._render_fallback_output(session), "deterministic-fallback", "local", "fallback_rule", None
 
     def _render_fallback_output(self, session: TaskSession) -> str:
         """Deterministic fallback so workflow remains executable/testable without API access."""

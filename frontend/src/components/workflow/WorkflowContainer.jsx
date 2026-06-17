@@ -91,6 +91,7 @@ export default function WorkflowContainer({
    const [session, setSession] = useState(initialData || null);
    const [loading, setLoading] = useState(false);
    const [error, setError] = useState(null);
+   const [runtimeStatus, setRuntimeStatus] = useState(null);
 
   // ════════════════════════════════════════════════════════════════════════
   // INITIALIZATION
@@ -110,6 +111,24 @@ export default function WorkflowContainer({
       onWorkflowUpdate(session);
     }
   }, [session, onWorkflowUpdate]);
+
+  useEffect(() => {
+    let cancelled = false;
+    APIClient.getRuntimeStatus()
+      .then((status) => {
+        if (!cancelled) {
+          setRuntimeStatus(status);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRuntimeStatus({ llm: { configured: false, provider: 'local', model: 'deterministic-fallback' } });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
    useEffect(() => {
      if (!userText || sessionId || initialData?.session_id) return;
@@ -407,6 +426,7 @@ export default function WorkflowContainer({
                 session={session}
                 onExecute={handleExecute}
                 loading={loading}
+                runtimeStatus={runtimeStatus}
               />
             )}
 
@@ -749,11 +769,12 @@ function PreflightPhase({ session, onRun, loading }) {
   );
 }
 
-function ExecutionPhase({ session, onExecute, loading }) {
+function ExecutionPhase({ session, onExecute, loading, runtimeStatus }) {
    const spec = session.specification;
    const validation = session.preflight_validation;
-   const [selectedModel, setSelectedModel] = useState(session.recommended_model || 'gpt-4');
-   const [selectedExecutor, setSelectedExecutor] = useState(session.executor_type || 'openai-compatible');
+   const llm = runtimeStatus?.llm;
+   const providerLabel = llm?.provider === 'qwen' ? '千问' : llm?.provider === 'doubao' ? '豆包' : '本地降级';
+   const executionMode = llm?.configured ? 'api_primary' : 'fallback_rule';
 
    // ⚠️ CRITICAL: Block execution if preflight failed
    if (!validation || !validation.passed) {
@@ -779,19 +800,6 @@ function ExecutionPhase({ session, onExecute, loading }) {
      );
    }
 
-   const models = [
-     { id: 'gpt-4', label: 'GPT-4 (推荐)', description: '最强大，适合复杂任务' },
-     { id: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo', description: '快速，成本低' },
-     { id: 'claude-3', label: 'Claude 3', description: '推理能力强' },
-     { id: 'local', label: '本地模型', description: '隐私优先' },
-   ];
-
-   const executors = [
-     { id: 'openai-compatible', label: 'OpenAI 兼容', description: '标准 API 调用' },
-     { id: 'prompt_only', label: '仅提示词', description: '返回提示词，不执行' },
-     { id: 'local', label: '本地执行', description: '使用本地模型' },
-   ];
-
    return (
      <div className="phase-content">
        <h2>✅ 预检已通过 - 任务执行</h2>
@@ -799,34 +807,26 @@ function ExecutionPhase({ session, onExecute, loading }) {
       {/* Execution Configuration */}
       <div className="execution-config">
         <div className="config-section">
-          <h3>📊 选择模型</h3>
-          <div className="model-selector">
-            {models.map(model => (
-              <div
-                key={model.id}
-                className={`model-card ${selectedModel === model.id ? 'selected' : ''}`}
-                onClick={() => setSelectedModel(model.id)}
-              >
-                <div className="model-name">{model.label}</div>
-                <div className="model-description">{model.description}</div>
+          <h3>运行时执行器</h3>
+          <div className={`runtime-card ${llm?.configured ? 'configured' : 'fallback'}`}>
+            <div className="runtime-card-main">
+              <span className="runtime-status-dot" aria-hidden="true"></span>
+              <div>
+                <div className="runtime-title">
+                  {llm?.configured ? `${providerLabel} API 已配置` : '本地 fallback 模式'}
+                </div>
+                <div className="runtime-description">
+                  {llm?.configured
+                    ? `将通过 ${providerLabel} 的 OpenAI-compatible 接口执行任务。`
+                    : '未检测到完整的豆包/千问配置，系统会生成可验证的基础交付稿。'}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="config-section">
-          <h3>⚙️ 选择执行器</h3>
-          <div className="executor-selector">
-            {executors.map(executor => (
-              <div
-                key={executor.id}
-                className={`executor-card ${selectedExecutor === executor.id ? 'selected' : ''}`}
-                onClick={() => setSelectedExecutor(executor.id)}
-              >
-                <div className="executor-name">{executor.label}</div>
-                <div className="executor-description">{executor.description}</div>
-              </div>
-            ))}
+            </div>
+            <div className="runtime-meta">
+              <span>Provider: {llm?.provider || 'local'}</span>
+              <span>Model: {llm?.model || 'deterministic-fallback'}</span>
+              <span>Mode: {executionMode}</span>
+            </div>
           </div>
         </div>
 
@@ -838,12 +838,12 @@ function ExecutionPhase({ session, onExecute, loading }) {
             <span className="value">{spec?.objective}</span>
           </div>
           <div className="summary-item">
-            <span className="label">选中模型：</span>
-            <span className="value">{models.find(m => m.id === selectedModel)?.label}</span>
+            <span className="label">执行模型：</span>
+            <span className="value">{llm?.configured ? `${providerLabel} / ${llm.model}` : 'deterministic-fallback'}</span>
           </div>
           <div className="summary-item">
-            <span className="label">执行器：</span>
-            <span className="value">{executors.find(e => e.id === selectedExecutor)?.label}</span>
+            <span className="label">执行模式：</span>
+            <span className="value">{executionMode}</span>
           </div>
         </div>
       </div>
@@ -876,7 +876,7 @@ function ValidationPhase({ session, onValidate, loading }) {
             <pre>{result.output}</pre>
           </div>
           <p className="result-meta">
-            执行时间: {result.execution_time_ms}ms | 模型: {result.model_used}
+            执行时间: {result.execution_time_ms}ms | 模型: {result.model_used} | 模式: {result.inference_mode || 'fallback_rule'}
           </p>
         </div>
       )}

@@ -53,3 +53,49 @@ def test_workflow_execute_idempotency_conflict_without_redis_lock():
 
     start_resp = client.post('/api/workflow/start', json={'text': '解释四面楚歌的意思'})
     assert start_resp.status_code == 200
+
+
+def test_v2_vertical_slice_executes_without_external_llm(monkeypatch):
+    monkeypatch.delenv("DOUBAO_API_KEY", raising=False)
+    monkeypatch.delenv("QWEN_API_KEY", raising=False)
+
+    from orchestrator.service_v2 import OrchestrationService
+
+    service = OrchestrationService(llm_client=None, store=None)
+
+    session = service.create_session(
+        "帮我写一封专业邮件，提醒供应商尽快补开发票",
+        selected_domains=["communication"],
+        selected_characteristics=["generative"],
+    )
+
+    clarification = service.process_clarification(session.session_id)
+    assert "should_skip" in clarification
+
+    if not clarification["should_skip"]:
+        service.submit_clarification_answers(
+            session.session_id,
+            {
+                "recipient": "供应商",
+                "communication_goal": "request",
+                "tone_preference": "formal",
+                "background": "订单已经完成，发票尚未回传，影响对账。",
+                "acceptance_criteria": "包含明确请求\n语气专业",
+            },
+        )
+
+    spec_result = service.align_specification(session.session_id)
+    assert spec_result["success"] is True
+    assert spec_result["specification"]["objective"]
+
+    preflight = service.run_preflight(session.session_id)
+    assert preflight["passed"] is True
+
+    execution = service.execute(session.session_id)
+    assert execution["success"] is True
+    assert execution["output"].strip()
+    assert execution["inference_mode"] == "fallback_rule"
+    assert execution["provider"] == "local"
+
+    validation = service.validate_output(session.session_id)
+    assert validation["passed"] is True
